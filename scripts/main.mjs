@@ -419,7 +419,7 @@ function registerModuleSettings() {
     default: true,
     onChange: async () => {
       if (!game.ready || !game.user?.isGM) return;
-      await ensureGmHotbarMacro();
+      await ensureGmHotbarMacro({ forceTargetSlot: true });
     }
   });
 
@@ -432,7 +432,7 @@ function registerModuleSettings() {
     default: GM_MACRO_SLOT_DEFAULT,
     onChange: async () => {
       if (!game.ready || !game.user?.isGM) return;
-      await ensureGmHotbarMacro();
+      await ensureGmHotbarMacro({ forceTargetSlot: true });
     }
   });
 
@@ -623,8 +623,9 @@ async function getOrCreateTileVisibilityMacro() {
   });
 }
 
-async function ensureGmHotbarMacro() {
+async function ensureGmHotbarMacro(options = {}) {
   if (!game.user?.isGM) return;
+  const forceTargetSlot = Boolean(options.forceTargetSlot);
 
   try {
     if (!isGmMacroAutomationEnabled()) {
@@ -638,6 +639,15 @@ async function ensureGmHotbarMacro() {
     const targetSlot = getConfiguredGmMacroSlot();
     const macroId = String(macro.id || "").trim();
     const assignedSlots = getAssignedMacroSlots(macroId);
+
+    if (!forceTargetSlot && assignedSlots.length > 0 && !assignedSlots.includes(targetSlot)) {
+      const currentSlot = assignedSlots[0];
+      if (currentSlot !== targetSlot) {
+        await game.settings.set(MODULE_ID, SETTING_GM_MACRO_SLOT, currentSlot);
+      }
+      return;
+    }
+
     const slotsToClear = assignedSlots.filter(slot => slot !== targetSlot);
     await clearUserHotbarSlots(slotsToClear);
 
