@@ -32,8 +32,8 @@
         "id": "bloodman",
         "type": "system",
         "compatibility": {
-          "minimum": 13,
-          "verified": 13
+          "minimum": "0.13.0",
+          "verified": "0.13.0"
         }
       }
     ]
