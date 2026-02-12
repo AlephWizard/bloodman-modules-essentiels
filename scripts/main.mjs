@@ -9,10 +9,13 @@ const DEFAULT_AUTO_CLOSE_MS = 6500;
 const DEFAULT_ANSWER_DELAY_MS = 240;
 const DEFAULT_BACKGROUND_SRC = "modules/bloodman-modules-essentiels/images/des_destin.png";
 const GM_MACRO_NAME = "Bloodman - Jet du destin";
-const GM_MACRO_ICON = "icons/svg/d20.svg";
-const GM_MACRO_SLOT_INDEX = 0;
-const GM_MACRO_SLOT = GM_MACRO_SLOT_INDEX + 1;
+const GM_MACRO_ICON = `modules/${MODULE_ID}/images/icon_macro_des_destin.jpg`;
 const GM_MACRO_FLAG = "autoJetDestinMacro";
+const SETTING_ENABLE_GM_MACRO = "enableGmHotbarMacro";
+const SETTING_GM_MACRO_SLOT = "gmHotbarMacroSlot";
+const GM_MACRO_SLOT_DEFAULT = 1;
+const GM_MACRO_SLOT_MIN = 1;
+const GM_MACRO_SLOT_MAX = 50;
 const GM_MACRO_COMMAND = `const api = game.modules.get("${MODULE_ID}")?.api;
 if (!api || typeof api.rollJetDestin !== "function") {
   ui.notifications?.warn("Module ${MODULE_ID} inactif ou API indisponible.");
@@ -340,6 +343,81 @@ function registerSocketHandler() {
   globalThis.__bjdVoyanceSocketHandler = handler;
 }
 
+function registerModuleSettings() {
+  game.settings.register(MODULE_ID, SETTING_ENABLE_GM_MACRO, {
+    name: t("BJD.Settings.EnableGmMacro.Name", "Activer la macro automatique GM"),
+    hint: t("BJD.Settings.EnableGmMacro.Hint", "Cree ou met a jour la macro et l'attribue automatiquement au slot configure."),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: async () => {
+      if (!game.ready || !game.user?.isGM) return;
+      await ensureGmHotbarMacro();
+    }
+  });
+
+  game.settings.register(MODULE_ID, SETTING_GM_MACRO_SLOT, {
+    name: t("BJD.Settings.GmMacroSlot.Name", "Slot de la macro GM"),
+    hint: t("BJD.Settings.GmMacroSlot.Hint", "Numero de slot (1 a 50) dans la hotbar GM pour attribuer la macro."),
+    scope: "world",
+    config: true,
+    type: Number,
+    default: GM_MACRO_SLOT_DEFAULT,
+    onChange: async () => {
+      if (!game.ready || !game.user?.isGM) return;
+      await ensureGmHotbarMacro();
+    }
+  });
+}
+
+function isGmMacroAutomationEnabled() {
+  return Boolean(game.settings?.get?.(MODULE_ID, SETTING_ENABLE_GM_MACRO));
+}
+
+function getConfiguredGmMacroSlot() {
+  const rawValue = Number(game.settings?.get?.(MODULE_ID, SETTING_GM_MACRO_SLOT));
+  if (!Number.isFinite(rawValue)) return GM_MACRO_SLOT_DEFAULT;
+  const normalized = Math.floor(rawValue);
+  return Math.max(GM_MACRO_SLOT_MIN, Math.min(GM_MACRO_SLOT_MAX, normalized));
+}
+
+async function clearUserHotbarSlots(slotNumbers = []) {
+  const user = game.user;
+  if (!user) return;
+
+  const normalizedSlots = [...new Set(
+    slotNumbers
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value >= GM_MACRO_SLOT_MIN)
+  )];
+  if (normalizedSlots.length === 0) return;
+
+  const hotbar = foundry.utils.deepClone(user.hotbar || {});
+  let changed = false;
+  for (const slot of normalizedSlots) {
+    if (hotbar[slot] !== undefined) {
+      delete hotbar[slot];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+
+  await user.update({ hotbar });
+}
+
+async function detachManagedMacroFromHotbar() {
+  const macro = findManagedJetDestinMacro();
+  const macroId = String(macro?.id || "").trim();
+  if (!macroId) return;
+
+  const slotsToClear = Object.entries(game.user?.hotbar || {})
+    .filter(([, assignedMacroId]) => String(assignedMacroId || "").trim() === macroId)
+    .map(([slot]) => Number(slot));
+
+  await clearUserHotbarSlots(slotsToClear);
+}
+
 function findManagedJetDestinMacro() {
   const macros = game.macros?.contents || [];
   const byFlag = macros.find(macro => macro.getFlag(MODULE_ID, GM_MACRO_FLAG) === true);
@@ -386,19 +464,34 @@ async function ensureGmHotbarMacro() {
   if (!game.user?.isGM) return;
 
   try {
+    if (!isGmMacroAutomationEnabled()) {
+      await detachManagedMacroFromHotbar();
+      return;
+    }
+
     const macro = await getOrCreateJetDestinMacro();
     if (!macro) return;
 
-    const currentSlotMacroId = String(game.user?.hotbar?.[GM_MACRO_SLOT] || "").trim();
-    if (currentSlotMacroId === String(macro.id || "").trim()) return;
+    const targetSlot = getConfiguredGmMacroSlot();
+    const macroId = String(macro.id || "").trim();
+    const assignedSlots = Object.entries(game.user?.hotbar || {})
+      .filter(([, assignedMacroId]) => String(assignedMacroId || "").trim() === macroId)
+      .map(([slot]) => Number(slot));
+    const slotsToClear = assignedSlots.filter(slot => slot !== targetSlot);
+    await clearUserHotbarSlots(slotsToClear);
 
-    await game.user.assignHotbarMacro(macro, GM_MACRO_SLOT);
+    const currentSlotMacroId = String(game.user?.hotbar?.[targetSlot] || "").trim();
+    if (currentSlotMacroId === macroId) return;
+
+    await game.user.assignHotbarMacro(macro, targetSlot);
   } catch (error) {
     console.error(`[${MODULE_ID}] failed to ensure GM hotbar macro`, error);
   }
 }
 
 Hooks.once("init", () => {
+  registerModuleSettings();
+
   const api = {
     rollJetDestin,
     emitVoyanceOverlayRequest,

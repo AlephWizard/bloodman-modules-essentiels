@@ -4,6 +4,16 @@
       "Title": "Automate de voyance",
       "ResultLabel": "Resultat"
     },
+    "Settings": {
+      "EnableGmMacro": {
+        "Name": "Activer la macro automatique GM",
+        "Hint": "Cree ou met a jour automatiquement la macro de jet du destin et l'assigne a la hotbar du GM."
+      },
+      "GmMacroSlot": {
+        "Name": "Slot hotbar de la macro GM",
+        "Hint": "Choisir le slot de hotbar (1 a 50) pour la macro de jet du destin."
+      }
+    },
     "Notify": {
       "SocketUnavailable": "Socket Foundry indisponible: diffusion globale non effectuee.",
       "RollFailed": "Impossible de lancer le jet du destin."
