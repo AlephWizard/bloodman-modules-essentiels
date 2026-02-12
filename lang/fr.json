@@ -12,11 +12,23 @@
       "GmMacroSlot": {
         "Name": "Slot hotbar de la macro GM",
         "Hint": "Choisir le slot de hotbar (1 a 50) pour la macro de jet du destin."
+      },
+      "EnableTileMacro": {
+        "Name": "Activer la macro de visibilite des tuiles",
+        "Hint": "Cree ou met a jour automatiquement la macro de toggle des tuiles et l'assigne a la hotbar du GM."
+      },
+      "TileMacroSlot": {
+        "Name": "Slot hotbar macro tuiles",
+        "Hint": "Choisir le slot de hotbar (1 a 50) pour la macro de toggle des tuiles."
       }
     },
     "Notify": {
       "SocketUnavailable": "Socket Foundry indisponible: diffusion globale non effectuee.",
-      "RollFailed": "Impossible de lancer le jet du destin."
+      "RollFailed": "Impossible de lancer le jet du destin.",
+      "GMOnly": "Seul un GM peut modifier la visibilite de toutes les tuiles.",
+      "NoActiveScene": "Aucune scene active trouvee.",
+      "TilesShown": "Toutes les tuiles de la scene sont maintenant visibles.",
+      "TilesHidden": "Toutes les tuiles de la scene sont maintenant cachees."
     }
   }
 }

@@ -16,11 +16,24 @@ const SETTING_GM_MACRO_SLOT = "gmHotbarMacroSlot";
 const GM_MACRO_SLOT_DEFAULT = 1;
 const GM_MACRO_SLOT_MIN = 1;
 const GM_MACRO_SLOT_MAX = 50;
+const TILE_MACRO_NAME = "Bloodman - Tuiles (Toggle)";
+const TILE_MACRO_ICON = `modules/${MODULE_ID}/images/icon_macro_tuile.png`;
+const TILE_MACRO_FLAG = "autoTileVisibilityMacro";
+const TILE_VISIBILITY_STATE_FLAG = "tileVisibilityHiddenState";
+const SETTING_ENABLE_TILE_MACRO = "enableTileVisibilityMacro";
+const SETTING_TILE_MACRO_SLOT = "tileVisibilityMacroSlot";
+const TILE_MACRO_SLOT_DEFAULT = 2;
 const GM_MACRO_COMMAND = `const api = game.modules.get("${MODULE_ID}")?.api;
 if (!api || typeof api.rollJetDestin !== "function") {
   ui.notifications?.warn("Module ${MODULE_ID} inactif ou API indisponible.");
 } else {
   await api.rollJetDestin();
+}`;
+const TILE_MACRO_COMMAND = `const api = game.modules.get("${MODULE_ID}")?.api;
+if (!api || typeof api.toggleCurrentSceneTilesVisibility !== "function") {
+  ui.notifications?.warn("Module ${MODULE_ID} inactif ou API indisponible.");
+} else {
+  await api.toggleCurrentSceneTilesVisibility();
 }`;
 
 const PROCESSED_REQUESTS = new Map();
@@ -322,6 +335,59 @@ async function rollJetDestin(options = {}) {
   }
 }
 
+function getCurrentViewedScene() {
+  return canvas?.scene || game.scenes?.current || null;
+}
+
+function getNextTileHiddenState(scene) {
+  const previousState = scene?.getFlag?.(MODULE_ID, TILE_VISIBILITY_STATE_FLAG);
+  if (typeof previousState !== "boolean") return false; // First click: show all tiles.
+  return !previousState;
+}
+
+async function toggleCurrentSceneTilesVisibility() {
+  if (!game.user?.isGM) {
+    ui.notifications?.warn(t("BJD.Notify.GMOnly", "Seul un GM peut modifier la visibilite de toutes les tuiles."));
+    return null;
+  }
+
+  const scene = getCurrentViewedScene();
+  if (!scene) {
+    ui.notifications?.warn(t("BJD.Notify.NoActiveScene", "Aucune scene active trouvee."));
+    return null;
+  }
+
+  const tileDocs = scene.tiles?.contents || [];
+  const targetHidden = getNextTileHiddenState(scene);
+
+  const updates = tileDocs
+    .filter(tile => Boolean(tile.hidden) !== targetHidden)
+    .map(tile => ({
+      _id: tile.id,
+      hidden: targetHidden
+    }));
+
+  if (updates.length > 0) {
+    // Batch document updates keep Foundry sync and history behavior for scene changes.
+    await scene.updateEmbeddedDocuments("Tile", updates);
+  }
+
+  await scene.setFlag(MODULE_ID, TILE_VISIBILITY_STATE_FLAG, targetHidden);
+
+  const notificationKey = targetHidden ? "BJD.Notify.TilesHidden" : "BJD.Notify.TilesShown";
+  const fallback = targetHidden
+    ? "Toutes les tuiles de la scene sont maintenant cachees."
+    : "Toutes les tuiles de la scene sont maintenant visibles.";
+  ui.notifications?.info(t(notificationKey, fallback));
+
+  return {
+    sceneId: scene.id,
+    hidden: targetHidden,
+    totalTiles: tileDocs.length,
+    updatedTiles: updates.length
+  };
+}
+
 function registerSocketHandler() {
   if (!game.socket) return;
 
@@ -369,6 +435,32 @@ function registerModuleSettings() {
       await ensureGmHotbarMacro();
     }
   });
+
+  game.settings.register(MODULE_ID, SETTING_ENABLE_TILE_MACRO, {
+    name: t("BJD.Settings.EnableTileMacro.Name", "Activer la macro de visibilite des tuiles"),
+    hint: t("BJD.Settings.EnableTileMacro.Hint", "Cree ou met a jour automatiquement la macro de toggle des tuiles et l'assigne a la hotbar du GM."),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: async () => {
+      if (!game.ready || !game.user?.isGM) return;
+      await ensureTileVisibilityHotbarMacro();
+    }
+  });
+
+  game.settings.register(MODULE_ID, SETTING_TILE_MACRO_SLOT, {
+    name: t("BJD.Settings.TileMacroSlot.Name", "Slot hotbar macro tuiles"),
+    hint: t("BJD.Settings.TileMacroSlot.Hint", "Choisir le slot de hotbar (1 a 50) pour la macro de toggle des tuiles."),
+    scope: "world",
+    config: true,
+    type: Number,
+    default: TILE_MACRO_SLOT_DEFAULT,
+    onChange: async () => {
+      if (!game.ready || !game.user?.isGM) return;
+      await ensureTileVisibilityHotbarMacro();
+    }
+  });
 }
 
 function isGmMacroAutomationEnabled() {
@@ -378,6 +470,17 @@ function isGmMacroAutomationEnabled() {
 function getConfiguredGmMacroSlot() {
   const rawValue = Number(game.settings?.get?.(MODULE_ID, SETTING_GM_MACRO_SLOT));
   if (!Number.isFinite(rawValue)) return GM_MACRO_SLOT_DEFAULT;
+  const normalized = Math.floor(rawValue);
+  return Math.max(GM_MACRO_SLOT_MIN, Math.min(GM_MACRO_SLOT_MAX, normalized));
+}
+
+function isTileMacroAutomationEnabled() {
+  return Boolean(game.settings?.get?.(MODULE_ID, SETTING_ENABLE_TILE_MACRO));
+}
+
+function getConfiguredTileMacroSlot() {
+  const rawValue = Number(game.settings?.get?.(MODULE_ID, SETTING_TILE_MACRO_SLOT));
+  if (!Number.isFinite(rawValue)) return TILE_MACRO_SLOT_DEFAULT;
   const normalized = Math.floor(rawValue);
   return Math.max(GM_MACRO_SLOT_MIN, Math.min(GM_MACRO_SLOT_MAX, normalized));
 }
@@ -406,14 +509,22 @@ async function clearUserHotbarSlots(slotNumbers = []) {
   await user.update({ hotbar });
 }
 
+function getAssignedMacroSlots(macroId) {
+  const id = String(macroId || "").trim();
+  if (!id) return [];
+
+  return Object.entries(game.user?.hotbar || {})
+    .filter(([, assignedMacroId]) => String(assignedMacroId || "").trim() === id)
+    .map(([slot]) => Number(slot))
+    .filter(slot => Number.isInteger(slot) && slot >= GM_MACRO_SLOT_MIN);
+}
+
 async function detachManagedMacroFromHotbar() {
   const macro = findManagedJetDestinMacro();
   const macroId = String(macro?.id || "").trim();
   if (!macroId) return;
 
-  const slotsToClear = Object.entries(game.user?.hotbar || {})
-    .filter(([, assignedMacroId]) => String(assignedMacroId || "").trim() === macroId)
-    .map(([slot]) => Number(slot));
+  const slotsToClear = getAssignedMacroSlots(macroId);
 
   await clearUserHotbarSlots(slotsToClear);
 }
@@ -460,6 +571,58 @@ async function getOrCreateJetDestinMacro() {
   });
 }
 
+async function detachManagedTileMacroFromHotbar() {
+  const macro = findManagedTileVisibilityMacro();
+  const macroId = String(macro?.id || "").trim();
+  if (!macroId) return;
+
+  const slotsToClear = getAssignedMacroSlots(macroId);
+  await clearUserHotbarSlots(slotsToClear);
+}
+
+function findManagedTileVisibilityMacro() {
+  const macros = game.macros?.contents || [];
+  const byFlag = macros.find(macro => macro.getFlag(MODULE_ID, TILE_MACRO_FLAG) === true);
+  if (byFlag) return byFlag;
+
+  return macros.find(macro => (
+    macro?.type === "script"
+    && macro?.name === TILE_MACRO_NAME
+    && String(macro?.command || "").includes(`game.modules.get("${MODULE_ID}")`)
+    && String(macro?.command || "").includes("toggleCurrentSceneTilesVisibility")
+  ));
+}
+
+async function getOrCreateTileVisibilityMacro() {
+  let macro = findManagedTileVisibilityMacro();
+  if (macro) {
+    const updates = {};
+    if (macro.name !== TILE_MACRO_NAME) updates.name = TILE_MACRO_NAME;
+    if (macro.command !== TILE_MACRO_COMMAND) updates.command = TILE_MACRO_COMMAND;
+    if (macro.img !== TILE_MACRO_ICON) updates.img = TILE_MACRO_ICON;
+    if (Object.keys(updates).length > 0) {
+      macro = await macro.update(updates);
+    }
+
+    if (macro.getFlag(MODULE_ID, TILE_MACRO_FLAG) !== true) {
+      await macro.setFlag(MODULE_ID, TILE_MACRO_FLAG, true);
+    }
+    return macro;
+  }
+
+  return Macro.create({
+    name: TILE_MACRO_NAME,
+    type: "script",
+    img: TILE_MACRO_ICON,
+    command: TILE_MACRO_COMMAND,
+    flags: {
+      [MODULE_ID]: {
+        [TILE_MACRO_FLAG]: true
+      }
+    }
+  });
+}
+
 async function ensureGmHotbarMacro() {
   if (!game.user?.isGM) return;
 
@@ -474,9 +637,7 @@ async function ensureGmHotbarMacro() {
 
     const targetSlot = getConfiguredGmMacroSlot();
     const macroId = String(macro.id || "").trim();
-    const assignedSlots = Object.entries(game.user?.hotbar || {})
-      .filter(([, assignedMacroId]) => String(assignedMacroId || "").trim() === macroId)
-      .map(([slot]) => Number(slot));
+    const assignedSlots = getAssignedMacroSlots(macroId);
     const slotsToClear = assignedSlots.filter(slot => slot !== targetSlot);
     await clearUserHotbarSlots(slotsToClear);
 
@@ -489,6 +650,33 @@ async function ensureGmHotbarMacro() {
   }
 }
 
+async function ensureTileVisibilityHotbarMacro() {
+  if (!game.user?.isGM) return;
+
+  try {
+    if (!isTileMacroAutomationEnabled()) {
+      await detachManagedTileMacroFromHotbar();
+      return;
+    }
+
+    const macro = await getOrCreateTileVisibilityMacro();
+    if (!macro) return;
+
+    const targetSlot = getConfiguredTileMacroSlot();
+    const macroId = String(macro.id || "").trim();
+    const assignedSlots = getAssignedMacroSlots(macroId);
+    const slotsToClear = assignedSlots.filter(slot => slot !== targetSlot);
+    await clearUserHotbarSlots(slotsToClear);
+
+    const currentSlotMacroId = String(game.user?.hotbar?.[targetSlot] || "").trim();
+    if (currentSlotMacroId === macroId) return;
+
+    await game.user.assignHotbarMacro(macro, targetSlot);
+  } catch (error) {
+    console.error(`[${MODULE_ID}] failed to ensure tile visibility hotbar macro`, error);
+  }
+}
+
 Hooks.once("init", () => {
   registerModuleSettings();
 
@@ -496,7 +684,8 @@ Hooks.once("init", () => {
     rollJetDestin,
     emitVoyanceOverlayRequest,
     showVoyanceOverlay,
-    handleVoyanceOverlayRequest
+    handleVoyanceOverlayRequest,
+    toggleCurrentSceneTilesVisibility
   };
 
   const module = game.modules?.get?.(MODULE_ID);
@@ -507,6 +696,7 @@ Hooks.once("init", () => {
 Hooks.once("ready", async () => {
   registerSocketHandler();
   await ensureGmHotbarMacro();
+  await ensureTileVisibilityHotbarMacro();
 });
 
 Hooks.on("createChatMessage", async message => {
@@ -520,6 +710,7 @@ export {
   rollJetDestin,
   emitVoyanceOverlayRequest,
   showVoyanceOverlay,
-  handleVoyanceOverlayRequest
+  handleVoyanceOverlayRequest,
+  toggleCurrentSceneTilesVisibility
 };
 
