@@ -8,6 +8,17 @@ const STYLE_ID = "bjd-voyance-style";
 const DEFAULT_AUTO_CLOSE_MS = 6500;
 const DEFAULT_ANSWER_DELAY_MS = 240;
 const DEFAULT_BACKGROUND_SRC = "modules/bloodman-modules-essentiels/images/des_destin.png";
+const GM_MACRO_NAME = "Bloodman - Jet du destin";
+const GM_MACRO_ICON = "icons/svg/d20.svg";
+const GM_MACRO_SLOT_INDEX = 0;
+const GM_MACRO_SLOT = GM_MACRO_SLOT_INDEX + 1;
+const GM_MACRO_FLAG = "autoJetDestinMacro";
+const GM_MACRO_COMMAND = `const api = game.modules.get("${MODULE_ID}")?.api;
+if (!api || typeof api.rollJetDestin !== "function") {
+  ui.notifications?.warn("Module ${MODULE_ID} inactif ou API indisponible.");
+} else {
+  await api.rollJetDestin();
+}`;
 
 const PROCESSED_REQUESTS = new Map();
 
@@ -329,6 +340,64 @@ function registerSocketHandler() {
   globalThis.__bjdVoyanceSocketHandler = handler;
 }
 
+function findManagedJetDestinMacro() {
+  const macros = game.macros?.contents || [];
+  const byFlag = macros.find(macro => macro.getFlag(MODULE_ID, GM_MACRO_FLAG) === true);
+  if (byFlag) return byFlag;
+
+  return macros.find(macro => (
+    macro?.type === "script"
+    && macro?.name === GM_MACRO_NAME
+    && String(macro?.command || "").includes(`game.modules.get("${MODULE_ID}")`)
+  ));
+}
+
+async function getOrCreateJetDestinMacro() {
+  let macro = findManagedJetDestinMacro();
+  if (macro) {
+    const updates = {};
+    if (macro.name !== GM_MACRO_NAME) updates.name = GM_MACRO_NAME;
+    if (macro.command !== GM_MACRO_COMMAND) updates.command = GM_MACRO_COMMAND;
+    if (macro.img !== GM_MACRO_ICON) updates.img = GM_MACRO_ICON;
+    if (Object.keys(updates).length > 0) {
+      macro = await macro.update(updates);
+    }
+
+    if (macro.getFlag(MODULE_ID, GM_MACRO_FLAG) !== true) {
+      await macro.setFlag(MODULE_ID, GM_MACRO_FLAG, true);
+    }
+    return macro;
+  }
+
+  return Macro.create({
+    name: GM_MACRO_NAME,
+    type: "script",
+    img: GM_MACRO_ICON,
+    command: GM_MACRO_COMMAND,
+    flags: {
+      [MODULE_ID]: {
+        [GM_MACRO_FLAG]: true
+      }
+    }
+  });
+}
+
+async function ensureGmHotbarMacro() {
+  if (!game.user?.isGM) return;
+
+  try {
+    const macro = await getOrCreateJetDestinMacro();
+    if (!macro) return;
+
+    const currentSlotMacroId = String(game.user?.hotbar?.[GM_MACRO_SLOT] || "").trim();
+    if (currentSlotMacroId === String(macro.id || "").trim()) return;
+
+    await game.user.assignHotbarMacro(macro, GM_MACRO_SLOT);
+  } catch (error) {
+    console.error(`[${MODULE_ID}] failed to ensure GM hotbar macro`, error);
+  }
+}
+
 Hooks.once("init", () => {
   const api = {
     rollJetDestin,
@@ -342,8 +411,9 @@ Hooks.once("init", () => {
   globalThis.bloodmanJetDestin = api;
 });
 
-Hooks.once("ready", () => {
+Hooks.once("ready", async () => {
   registerSocketHandler();
+  await ensureGmHotbarMacro();
 });
 
 Hooks.on("createChatMessage", async message => {
