@@ -1,7 +1,7 @@
 {
-  "id": "bloodman-jet-destin",
-  "title": "Bloodman - Jet du destin",
-  "description": "Module independant pour le jet du destin (automate de voyance).",
+  "id": "bloodman-modules-essentiels",
+  "title": "Bloodman - Modules Essentiels",
+  "description": "Module Foundry contenant les fonctionnalites essentielles Bloodman (incluant le jet du destin).",
   "version": "1.0.0",
   "compatibility": {
     "minimum": 13,

@@ -1,10 +1,10 @@
-# Bloodman - Jet du destin
+# Bloodman - Modules Essentiels
 
-Module Foundry independant pour l'automate de voyance (jet du destin).
+Module Foundry contenant les fonctionnalites essentielles Bloodman (incluant le jet du destin).
 
 ## Installation
 
-1. Verifier que le dossier existe: `Data/modules/bloodman-jet-destin`
+1. Verifier que le dossier existe: `Data/modules/bloodman-modules-essentiels`
 2. Activer le module dans le panneau Modules.
 
 ## Macro
@@ -12,9 +12,9 @@ Module Foundry independant pour l'automate de voyance (jet du destin).
 Creer une macro de type Script et coller:
 
 ```js
-const api = game.modules.get("bloodman-jet-destin")?.api;
+const api = game.modules.get("bloodman-modules-essentiels")?.api;
 if (!api || typeof api.rollJetDestin !== "function") {
-  ui.notifications?.warn("Module bloodman-jet-destin inactif ou API indisponible.");
+  ui.notifications?.warn("Module bloodman-modules-essentiels inactif ou API indisponible.");
 } else {
   await api.rollJetDestin();
 }
@@ -24,14 +24,14 @@ if (!api || typeof api.rollJetDestin !== "function") {
 
 Le module expose aussi:
 
-- `game.modules.get("bloodman-jet-destin").api.rollJetDestin(options)`
-- `game.modules.get("bloodman-jet-destin").api.emitVoyanceOverlayRequest(payload)`
-- `game.modules.get("bloodman-jet-destin").api.showVoyanceOverlay(payload)`
+- `game.modules.get("bloodman-modules-essentiels").api.rollJetDestin(options)`
+- `game.modules.get("bloodman-modules-essentiels").api.emitVoyanceOverlayRequest(payload)`
+- `game.modules.get("bloodman-modules-essentiels").api.showVoyanceOverlay(payload)`
 
 Exemple:
 
 ```js
-await game.modules.get("bloodman-jet-destin")?.api?.rollJetDestin({
+await game.modules.get("bloodman-modules-essentiels")?.api?.rollJetDestin({
   threshold: 10,
   autoCloseMs: 6500,
   answerDelayMs: 240

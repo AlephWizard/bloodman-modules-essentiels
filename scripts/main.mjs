@@ -1,13 +1,13 @@
-const MODULE_ID = "bloodman-jet-destin";
+const MODULE_ID = "bloodman-modules-essentiels";
 const MODULE_SOCKET = `module.${MODULE_ID}`;
 const MODULE_FLAG_KEY = MODULE_ID;
-const REQUEST_CHAT_MARKUP = "<span style='display:none'>bloodman-jet-destin-request</span>";
+const REQUEST_CHAT_MARKUP = "<span style='display:none'>bloodman-modules-essentiels-request</span>";
 const REQUEST_RETENTION_MS = 2 * 60 * 1000;
 const OVERLAY_ID = "bjd-voyance-overlay";
 const STYLE_ID = "bjd-voyance-style";
 const DEFAULT_AUTO_CLOSE_MS = 6500;
 const DEFAULT_ANSWER_DELAY_MS = 240;
-const DEFAULT_BACKGROUND_SRC = "modules/bloodman-jet-destin/images/des_destin.png";
+const DEFAULT_BACKGROUND_SRC = "modules/bloodman-modules-essentiels/images/des_destin.png";
 
 const PROCESSED_REQUESTS = new Map();
 
