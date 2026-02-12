@@ -1,0 +1,13 @@
+{
+  "BJD": {
+    "Chat": {
+      "Title": "Automate de voyance",
+      "ResultLabel": "Resultat"
+    },
+    "Notify": {
+      "SocketUnavailable": "Socket Foundry indisponible: diffusion globale non effectuee.",
+      "RollFailed": "Impossible de lancer le jet du destin."
+    }
+  }
+}
+

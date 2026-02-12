@@ -1,0 +1,41 @@
+{
+  "id": "bloodman-jet-destin",
+  "title": "Bloodman - Jet du destin",
+  "description": "Module independant pour le jet du destin (automate de voyance).",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": 13,
+    "verified": 13
+  },
+  "authors": [
+    {
+      "name": "AbelGuillouet&Codex"
+    }
+  ],
+  "socket": true,
+  "esmodules": [
+    "scripts/main.mjs"
+  ],
+  "styles": [
+    "styles/destin.css"
+  ],
+  "languages": [
+    {
+      "lang": "fr",
+      "name": "Francais",
+      "path": "lang/fr.json"
+    }
+  ],
+  "relationships": {
+    "systems": [
+      {
+        "id": "bloodman",
+        "type": "system",
+        "compatibility": {
+          "minimum": 13,
+          "verified": 13
+        }
+      }
+    ]
+  }
+}
