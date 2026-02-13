@@ -23,31 +23,22 @@
       },
       "TokenResize": {
         "Name": "Redimensionnement de token",
-        "Hint": "Cliquez le portrait pour ouvrir la fenetre d'ajustement. Utilisez l'icone image dans la fenetre pour ouvrir le Finder."
+        "Hint": "Le portrait conserve le Finder natif. Utilisez le bouton Token sur la fiche pour cadrer et generer le PNG de token."
       }
     },
     "TokenResize": {
       "Title": "Redimensionnement de token",
       "Close": "Fermer",
-      "Browse": "Choisir une image",
-      "FilePickerUnavailable": "Finder d'image indisponible.",
+      "OpenEditor": "Token",
       "DragHint": "Glisser l'image source; le cercle indique la zone visible du token.",
       "ScaleX": "Echelle X",
       "ScaleY": "Echelle Y",
       "OffsetX": "Decalage X",
       "OffsetY": "Decalage Y",
       "LockScale": "Lier X et Y",
-      "KeepHistory": "Conserver l'historique (creer plusieurs PNG)",
-      "OverwriteModeInfo": "Mode ecrasement actif: un seul PNG par fiche (PJ/PNJ), remplace a chaque application.",
-      "HistoryModeInfo": "Mode historique actif: chaque application cree un nouveau PNG.",
       "Reset": "Reinitialiser",
       "Cancel": "Annuler",
-      "Apply": "Appliquer",
-      "Saved": "Redimensionnement du token enregistre.",
-      "SaveFailed": "Impossible d'enregistrer le redimensionnement du token.",
-      "StorageIdentityMissing": "Impossible d'identifier la fiche pour enregistrer le token.",
-      "NoActiveTokenFound": "Aucun token actif trouve. Le redimensionnement sera applique au prochain token place.",
-      "TokenTemporaryDataUrlWarning": "PNG token non persiste sur disque; utilisation temporaire en memoire."
+      "Apply": "Appliquer"
     },
     "Notify": {
       "SocketUnavailable": "Socket Foundry indisponible: diffusion globale non effectuee.",
