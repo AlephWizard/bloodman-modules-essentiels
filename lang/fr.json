@@ -6,7 +6,7 @@
     },
     "Settings": {
       "EnableGmMacro": {
-        "Name": "Activer la macro automatique GM",
+        "Name": "Activer la macro automatique du destin",
         "Hint": "Cree ou met a jour automatiquement la macro de jet du destin et l'assigne a la hotbar du GM."
       },
       "GmMacroSlot": {
@@ -20,7 +20,30 @@
       "TileMacroSlot": {
         "Name": "Slot hotbar macro tuiles",
         "Hint": "Choisir le slot de hotbar (1 a 50) pour la macro de toggle des tuiles."
+      },
+      "TokenResize": {
+        "Name": "Redimensionnement de token",
+        "Hint": "Cliquez le portrait pour ouvrir la fenetre d'ajustement. Utilisez l'icone image dans la fenetre pour ouvrir le Finder."
       }
+    },
+    "TokenResize": {
+      "Title": "Redimensionnement de token",
+      "Close": "Fermer",
+      "Browse": "Choisir une image",
+      "FilePickerUnavailable": "Finder d'image indisponible.",
+      "DragHint": "Glisser l'image source; le cercle indique la zone visible du token.",
+      "ScaleX": "Echelle X",
+      "ScaleY": "Echelle Y",
+      "OffsetX": "Decalage X",
+      "OffsetY": "Decalage Y",
+      "LockScale": "Lier X et Y",
+      "Reset": "Reinitialiser",
+      "Cancel": "Annuler",
+      "Apply": "Appliquer",
+      "Saved": "Redimensionnement du token enregistre.",
+      "SaveFailed": "Impossible d'enregistrer le redimensionnement du token.",
+      "NoActiveTokenFound": "Aucun token actif trouve. Le redimensionnement sera applique au prochain token place.",
+      "TokenTemporaryDataUrlWarning": "PNG token non persiste sur disque; utilisation temporaire en memoire."
     },
     "Notify": {
       "SocketUnavailable": "Socket Foundry indisponible: diffusion globale non effectuee.",

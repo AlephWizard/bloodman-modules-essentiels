@@ -1,2 +1,271 @@
 /* Styles loaded from module.json. Runtime styles are injected by scripts/main.mjs. */
 
+img.portrait.bjd-token-resize-enabled {
+  cursor: pointer;
+}
+
+img.portrait.bjd-token-resize-enabled:active {
+  cursor: pointer;
+}
+
+#bjd-token-resize-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 24000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 15, 20, 0.74);
+  backdrop-filter: blur(3px);
+}
+
+#bjd-token-resize-overlay.is-picker-open .bjd-token-resize-backdrop {
+  opacity: 0.25;
+}
+
+#bjd-token-resize-overlay.is-picker-open .bjd-token-resize-dialog {
+  pointer-events: none;
+}
+
+#bjd-token-resize-overlay.is-picker-open {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.bjd-token-picker-foreground,
+.window-app.filepicker,
+.application.filepicker,
+.app.filepicker,
+.filepicker {
+  z-index: 32000 !important;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-dialog {
+  position: relative;
+  width: min(900px, 95vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(165deg, rgba(40, 47, 61, 0.97), rgba(20, 24, 33, 0.97));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.5);
+  color: #f4f4f4;
+  overflow: hidden;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-title-wrap h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-title-wrap p {
+  margin: 2px 0 0;
+  font-size: 0.83rem;
+  opacity: 0.84;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-find,
+#bjd-token-resize-overlay .bjd-token-resize-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f4f4f4;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-find {
+  font-size: 14px;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.2fr);
+  gap: 18px;
+  padding: 16px;
+  overflow: auto;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-mask {
+  position: relative;
+  width: min(360px, 65vw);
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: radial-gradient(circle at 36% 25%, #7f90a6, #384251 70%);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-mask.is-dragging {
+  cursor: grabbing;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-image {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  pointer-events: none;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-ring {
+  position: absolute;
+  inset: 4%;
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-ring::before,
+#bjd-token-resize-overlay .bjd-token-resize-preview-ring::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-ring::before {
+  left: 50%;
+  top: 10%;
+  bottom: 10%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-preview-ring::after {
+  top: 50%;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-help {
+  margin: 0;
+  text-align: center;
+  font-size: 0.82rem;
+  opacity: 0.82;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-control {
+  display: grid;
+  grid-template-columns: 92px 1fr 86px;
+  gap: 8px;
+  align-items: center;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-control span {
+  font-size: 0.85rem;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-control input[type="range"] {
+  width: 100%;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-control input[type="number"] {
+  width: 100%;
+  min-width: 0;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+#bjd-token-resize-overlay .bjd-btn {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f4f4f4;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+#bjd-token-resize-overlay .bjd-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+#bjd-token-resize-overlay .bjd-btn-primary {
+  background: #4f8a4d;
+  border-color: #4f8a4d;
+  color: #fff;
+}
+
+#bjd-token-resize-overlay .bjd-btn-primary:hover {
+  background: #5d9f5a;
+  border-color: #5d9f5a;
+}
+
+@media (max-width: 860px) {
+  #bjd-token-resize-overlay .bjd-token-resize-dialog {
+    max-height: 95vh;
+  }
+
+  #bjd-token-resize-overlay .bjd-token-resize-body {
+    grid-template-columns: 1fr;
+  }
+
+  #bjd-token-resize-overlay .bjd-token-resize-preview-mask {
+    width: min(320px, 72vw);
+  }
+}
+
