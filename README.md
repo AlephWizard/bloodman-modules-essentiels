@@ -5,7 +5,16 @@ Module Foundry contenant les fonctionnalites essentielles Bloodman (incluant le 
 ## Installation
 
 1. Verifier que le dossier existe: `Data/modules/bloodman-modules-essentiels`
-2. Activer le module dans le panneau Modules.
+2. Verifier que le dossier des PNG de tokens existe: `Data/modules/bloodman-modules-essentiels-token-resize`
+3. Activer le module dans le panneau Modules.
+
+## Token Resize
+
+Les PNG utilises par le redimensionnement de token sont desormais stockes hors du module principal, dans:
+
+`modules/bloodman-modules-essentiels-token-resize`
+
+Le module gere automatiquement la migration logique des anciens chemins `modules/bloodman-modules-essentiels/images/token-resize/...`.
 
 ## Macro
 

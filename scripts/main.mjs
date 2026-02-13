@@ -33,7 +33,8 @@ const TOKEN_OFFSET_MIN = -2;
 const TOKEN_OFFSET_MAX = 2;
 const TOKEN_TEXTURE_FIT = "contain";
 const TOKEN_MASK_INSET_RATIO = 0.04;
-const TOKEN_RESIZE_EXPORT_ROOT = `modules/${MODULE_ID}/images/token-resize`;
+const TOKEN_RESIZE_LEGACY_EXPORT_ROOT = `modules/${MODULE_ID}/images/token-resize`;
+const TOKEN_RESIZE_EXPORT_ROOT = `modules/${MODULE_ID}-token-resize`;
 const TOKEN_RESIZE_ACTOR_TYPES = new Set(["personnage", "personnage-non-joueur"]);
 const IMAGE_DISPLAY_RETRY_DELAYS = Object.freeze([0, 120, 260]);
 const IMAGE_DISPLAY_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -196,11 +197,27 @@ function sanitizeFilenamePart(value, fallback = "item") {
   return (normalized || fallback).slice(0, 48);
 }
 
+function remapLegacyTokenResizePath(path) {
+  const normalized = String(path || "").trim();
+  if (!normalized) return "";
+  const match = normalized.match(/^([^?#]*)(.*)$/);
+  const pathPart = String(match?.[1] || "");
+  const suffixPart = String(match?.[2] || "");
+  const legacyLower = TOKEN_RESIZE_LEGACY_EXPORT_ROOT.toLowerCase();
+  const pathLower = pathPart.toLowerCase();
+  if (pathLower === legacyLower) return `${TOKEN_RESIZE_EXPORT_ROOT}${suffixPart}`;
+  if (pathLower.startsWith(`${legacyLower}/`)) {
+    return `${TOKEN_RESIZE_EXPORT_ROOT}${pathPart.slice(TOKEN_RESIZE_LEGACY_EXPORT_ROOT.length)}${suffixPart}`;
+  }
+  return normalized;
+}
+
 function normalizeFoundryFilePath(value) {
-  return String(value || "")
+  const normalized = String(value || "")
     .trim()
     .replace(/\\/g, "/")
     .replace(/^\.\/+/, "");
+  return remapLegacyTokenResizePath(normalized);
 }
 
 function isImageFilePathLike(path) {
@@ -2132,9 +2149,8 @@ Hooks.on("preCreateToken", (tokenDoc, _data, options, userId) => {
   if (options && typeof options === "object") options.bloodmanTokenPreApplied = true;
 });
 
-Hooks.on("createToken", async (tokenDoc, options) => {
+Hooks.on("createToken", async tokenDoc => {
   if (!isTokenResizeEnabled()) return;
-  if (options?.bloodmanTokenPreApplied) return;
   try {
     await applyStoredTokenResizeToTokenDocument(tokenDoc, { allowPortraitFallback: true });
   } catch (error) {
