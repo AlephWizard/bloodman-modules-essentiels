@@ -218,6 +218,17 @@ img.portrait.bjd-token-resize-enabled:active {
   margin-top: 2px;
 }
 
+#bjd-token-resize-overlay .bjd-token-resize-storage-mode {
+  margin-top: 8px;
+}
+
+#bjd-token-resize-overlay .bjd-token-resize-mode-note {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  opacity: 0.75;
+}
+
 #bjd-token-resize-overlay .bjd-token-resize-footer {
   display: flex;
   justify-content: space-between;

@@ -248,36 +248,66 @@ function inferTokenTextureOutputFormat(sourceSrc) {
   return { mimeType: "image/png", extension: "png", quality: 1 };
 }
 
+function resolveWorldActorStorageIdentity(actor, options = {}) {
+  const actorIdCandidates = [
+    options?.actorId,
+    actor?.id,
+    actor?.token?.actorId,
+    actor?.parent?.id
+  ];
+  for (const candidate of actorIdCandidates) {
+    const id = String(candidate || "").trim();
+    if (!id) continue;
+    const worldActor = game.actors?.get?.(id);
+    if (worldActor?.id) return worldActor;
+  }
+
+  const actorUuid = String(options?.actorUuid || actor?.uuid || "").trim();
+  if (actorUuid.startsWith("Actor.")) {
+    const actorId = actorUuid.split(".")[1];
+    const worldActor = game.actors?.get?.(actorId);
+    if (worldActor?.id) return worldActor;
+  }
+
+  return null;
+}
+
+function resolveTokenResizeStorageKey(actor, state = {}, options = {}) {
+  const providedKey = String(
+    state?.storageKey
+    || options?.storageKey
+    || ""
+  ).trim();
+  if (providedKey) return sanitizeFilenamePart(providedKey, "actor");
+
+  const worldActor = resolveWorldActorStorageIdentity(actor, options);
+  if (worldActor?.id) return sanitizeFilenamePart(worldActor.id, "actor");
+
+  const explicitActorId = String(options?.actorId || "").trim();
+  if (explicitActorId) return sanitizeFilenamePart(explicitActorId, "actor");
+  return "";
+}
+
 function buildTokenResizeExportPath(actor, state, options = {}, format = {}) {
   const worldId = sanitizeFilenamePart(game.world?.id || "world", "world");
-  const actorId = sanitizeFilenamePart(
-    options?.actorId
-    || actor?.token?.actorId
-    || actor?.id
-    || actor?.name
-    || "actor",
-    "actor"
-  );
-  const actorName = sanitizeFilenamePart(actor?.name || actor?.prototypeToken?.name || "token", "token");
-  const tokenId = sanitizeFilenamePart(
-    options?.tokenId
-    || actor?.token?.id
-    || actor?.parent?.id
-    || "scene",
-    "scene"
-  );
-  const seed = [
-    state?.src,
-    state?.scaleX,
-    state?.scaleY,
-    state?.offsetX,
-    state?.offsetY,
-    TOKEN_TEXTURE_FIT
-  ].join("|");
-  const seedHash = hashTokenResizeSeed(seed);
+  const storageKey = resolveTokenResizeStorageKey(actor, state, options);
+  if (!storageKey) return null;
+  const keepHistory = (options?.keepHistory === true) || (state?.keepHistory === true);
   const extension = String(format?.extension || "png").trim().toLowerCase() || "png";
-  const directory = `${TOKEN_RESIZE_EXPORT_ROOT}/${worldId}/${actorId}`;
-  const filename = `${actorName}-${tokenId}-${seedHash}.${extension}`;
+  const directory = `${TOKEN_RESIZE_EXPORT_ROOT}/${worldId}/${storageKey}`;
+  let filename = `token.${extension}`;
+  if (keepHistory) {
+    const seed = [
+      state?.src,
+      state?.scaleX,
+      state?.scaleY,
+      state?.offsetX,
+      state?.offsetY,
+      TOKEN_TEXTURE_FIT
+    ].join("|");
+    const seedHash = hashTokenResizeSeed(seed);
+    filename = `token-${seedHash}.${extension}`;
+  }
   return { directory, filename };
 }
 
@@ -312,14 +342,23 @@ async function persistTokenTextureDataUrl(dataUrl, actor, state, options = {}, f
     if (!(blob && Number(blob.size) > 0)) return sourceData;
 
     const output = buildTokenResizeExportPath(actor, state, options, format);
+    if (!output?.directory || !output?.filename) {
+      console.warn(`[${MODULE_ID}] token storage key unavailable; using source image for token`);
+      return sourceData;
+    }
     await ensureDirectoryPath(filePickerClass, "data", output.directory);
 
     const mimeType = String(format?.mimeType || blob.type || "image/png").trim().toLowerCase();
     const file = new File([blob], output.filename, { type: mimeType });
-    const uploadResult = await filePickerClass.upload("data", output.directory, file, {}).catch(error => {
-      console.warn(`[${MODULE_ID}] token texture upload failed`, error);
-      return null;
-    });
+    const uploadBody = options?.keepHistory === true ? {} : { overwrite: true };
+    let uploadResult = await filePickerClass.upload("data", output.directory, file, uploadBody).catch(() => null);
+    if (!uploadResult && options?.keepHistory !== true) {
+      uploadResult = await filePickerClass.upload("data", output.directory, file, {}).catch(() => null);
+    }
+    if (!uploadResult) {
+      console.warn(`[${MODULE_ID}] token texture upload failed`);
+      return sourceData;
+    }
 
     const uploadedPath = normalizeFoundryFilePath(
       uploadResult?.path
@@ -330,7 +369,7 @@ async function persistTokenTextureDataUrl(dataUrl, actor, state, options = {}, f
     const expectedPath = normalizeFoundryFilePath(`${output.directory}/${output.filename}`);
     if (uploadedPath && await canDisplayImageSourceWithRetry(uploadedPath)) return uploadedPath;
     if (uploadedPath) return uploadedPath;
-    if (uploadResult && expectedPath && await canDisplayImageSourceWithRetry(expectedPath)) return expectedPath;
+    if (expectedPath && await canDisplayImageSourceWithRetry(expectedPath)) return expectedPath;
 
     if (uploadedPath) {
       console.warn(`[${MODULE_ID}] uploaded token texture path is not displayable`, {
@@ -443,6 +482,9 @@ function sanitizeTokenResizeFlagState(rawState = {}, options = {}) {
   const offsetX = normalizeTokenOffset(rawState?.offsetX, 0);
   const offsetY = normalizeTokenOffset(rawState?.offsetY, 0);
   const lockScale = rawState?.lockScale !== false;
+  const keepHistory = rawState?.keepHistory === true;
+  const storageKeyRaw = String(rawState?.storageKey || options?.storageKey || "").trim();
+  const storageKey = storageKeyRaw ? sanitizeFilenamePart(storageKeyRaw, "actor") : "";
 
   return {
     src: sourceSrc,
@@ -451,7 +493,9 @@ function sanitizeTokenResizeFlagState(rawState = {}, options = {}) {
     offsetX,
     offsetY,
     fit: TOKEN_TEXTURE_FIT,
-    lockScale
+    lockScale,
+    keepHistory,
+    storageKey
   };
 }
 
@@ -525,7 +569,11 @@ function getActorTokenTextureState(actor, options = {}) {
   const actorSrc = String(worldActor?.img || actor?.img || "").trim();
   const tokenSrc = String(foundry.utils.getProperty(tokenData, `${texturePath}.src`) || "").trim();
   const fallbackSrc = actorSrc || tokenSrc || preferredSrc || "icons/svg/mystery-man.svg";
-  const normalizedStoredState = sanitizeTokenResizeFlagState(storedState || {}, { fallbackSrc });
+  const resolvedStorageKey = resolveTokenResizeStorageKey(actor, storedState || {}, options);
+  const normalizedStoredState = sanitizeTokenResizeFlagState(storedState || {}, {
+    fallbackSrc,
+    storageKey: resolvedStorageKey
+  });
   const sourceSrc = normalizedStoredState.src || preferredSrc || fallbackSrc;
 
   return sanitizeTokenResizeFlagState(
@@ -533,7 +581,10 @@ function getActorTokenTextureState(actor, options = {}) {
       ...normalizedStoredState,
       src: sourceSrc
     },
-    { fallbackSrc: sourceSrc }
+    {
+      fallbackSrc: sourceSrc,
+      storageKey: normalizedStoredState.storageKey || resolvedStorageKey
+    }
   );
 }
 
@@ -715,8 +766,29 @@ async function buildTokenTextureSourceFromResizeState(state, options = {}) {
 async function saveActorTokenTextureState(actor, state, options = {}) {
   if (!actor) return false;
   const sourceSrc = String(state?.src || "").trim() || "icons/svg/mystery-man.svg";
-  const normalizedState = sanitizeTokenResizeFlagState(state, { fallbackSrc: sourceSrc });
+  const rawStorageKey = resolveTokenResizeStorageKey(actor, state, options);
+  if (!rawStorageKey) {
+    ui.notifications?.error(
+      t(
+        "BJD.TokenResize.StorageIdentityMissing",
+        "Impossible d'identifier la fiche pour enregistrer le token."
+      )
+    );
+    return false;
+  }
+  const normalizedState = sanitizeTokenResizeFlagState(
+    {
+      ...state,
+      storageKey: rawStorageKey
+    },
+    { fallbackSrc: sourceSrc, storageKey: rawStorageKey }
+  );
   const outputFormat = inferTokenTextureOutputFormat(normalizedState.src);
+  const persistOptions = {
+    ...options,
+    keepHistory: normalizedState.keepHistory === true,
+    storageKey: normalizedState.storageKey
+  };
   const tokenTextureData = await buildTokenTextureSourceFromResizeState(normalizedState, {
     outputMime: outputFormat.mimeType,
     outputQuality: outputFormat.quality
@@ -725,7 +797,7 @@ async function saveActorTokenTextureState(actor, state, options = {}) {
     tokenTextureData,
     actor,
     normalizedState,
-    options,
+    persistOptions,
     outputFormat
   );
   tokenTextureSrc = String(tokenTextureSrc || "").trim() || String(tokenTextureData || "").trim();
@@ -747,7 +819,9 @@ async function saveActorTokenTextureState(actor, state, options = {}) {
     scaleY: normalizedState.scaleY,
     offsetX: normalizedState.offsetX,
     offsetY: normalizedState.offsetY,
-    lockScale: normalizedState.lockScale
+    lockScale: normalizedState.lockScale,
+    keepHistory: normalizedState.keepHistory,
+    storageKey: normalizedState.storageKey
   };
 
   const payload = {
@@ -841,7 +915,9 @@ function openTokenResizeModal(actor, options = {}) {
     offsetX: textureState.offsetX,
     offsetY: textureState.offsetY,
     fit: textureState.fit,
-    lockScale: textureState.lockScale !== false
+    lockScale: textureState.lockScale !== false,
+    keepHistory: textureState.keepHistory === true,
+    storageKey: textureState.storageKey || resolveTokenResizeStorageKey(actor, textureState, options)
   };
 
   const actorName = String(actor.name || actor.prototypeToken?.name || "Acteur").trim() || "Acteur";
@@ -908,6 +984,11 @@ function openTokenResizeModal(actor, options = {}) {
             <input type="checkbox" data-action="lock-scale" ${state.lockScale ? "checked" : ""} />
             <span>${t("BJD.TokenResize.LockScale", "Lier X et Y")}</span>
           </label>
+          <label class="bjd-token-resize-lock bjd-token-resize-storage-mode">
+            <input type="checkbox" data-action="keep-history" ${state.keepHistory ? "checked" : ""} />
+            <span>${t("BJD.TokenResize.KeepHistory", "Conserver l'historique (creer plusieurs PNG)")}</span>
+          </label>
+          <p class="bjd-token-resize-mode-note" data-role="storage-mode-note"></p>
         </div>
       </div>
       <footer class="bjd-token-resize-footer">
@@ -940,7 +1021,21 @@ function openTokenResizeModal(actor, options = {}) {
   const refreshPreview = (syncInputs = false) => {
     updateTokenResizePreview(overlay, state, { syncInputs });
   };
+  const storageModeNoteEl = overlay.querySelector("[data-role='storage-mode-note']");
+  const refreshStorageModeNote = () => {
+    if (!storageModeNoteEl) return;
+    storageModeNoteEl.textContent = state.keepHistory
+      ? t(
+        "BJD.TokenResize.HistoryModeInfo",
+        "Mode historique actif: chaque application cree un nouveau PNG."
+      )
+      : t(
+        "BJD.TokenResize.OverwriteModeInfo",
+        "Mode ecrasement actif: un seul PNG par personnage (remplace a chaque application)."
+      );
+  };
   refreshPreview(true);
+  refreshStorageModeNote();
 
   const browseImageButton = overlay.querySelector("[data-action='browse-image']");
   browseImageButton?.addEventListener("click", () => {
@@ -994,6 +1089,12 @@ function openTokenResizeModal(actor, options = {}) {
     if (!state.lockScale) return;
     state.scaleY = state.scaleX;
     refreshPreview(true);
+  });
+
+  const keepHistoryInput = overlay.querySelector("[data-action='keep-history']");
+  keepHistoryInput?.addEventListener("change", () => {
+    state.keepHistory = Boolean(keepHistoryInput.checked);
+    refreshStorageModeNote();
   });
 
   const previewMask = overlay.querySelector(".bjd-token-resize-preview-mask");
@@ -1140,11 +1241,26 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
   if (!rawState?.src && !rawState?.tokenSrc) return false;
 
   const sourceFallback = String(rawState?.src || actor?.img || "icons/svg/mystery-man.svg").trim() || "icons/svg/mystery-man.svg";
-  let desiredState = sanitizeTokenResizeFlagState(rawState, { fallbackSrc: sourceFallback });
+  const resolvedStorageKey = resolveTokenResizeStorageKey(actor, rawState, options);
+  let desiredState = sanitizeTokenResizeFlagState(
+    {
+      ...rawState,
+      storageKey: rawState?.storageKey || resolvedStorageKey
+    },
+    {
+      fallbackSrc: sourceFallback,
+      storageKey: rawState?.storageKey || resolvedStorageKey
+    }
+  );
   let tokenSrc = String(rawState?.tokenSrc || "").trim();
 
   if (!tokenSrc && desiredState.src) {
     const outputFormat = inferTokenTextureOutputFormat(desiredState.src);
+    const persistOptions = {
+      ...options,
+      keepHistory: desiredState.keepHistory === true,
+      storageKey: desiredState.storageKey
+    };
     const tokenTextureData = await buildTokenTextureSourceFromResizeState(desiredState, {
       outputMime: outputFormat.mimeType,
       outputQuality: outputFormat.quality
@@ -1153,7 +1269,7 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
       tokenTextureData,
       actorUpdateTarget || actor,
       desiredState,
-      options,
+      persistOptions,
       outputFormat
     );
     tokenSrc = String(tokenSrc || "").trim() || String(tokenTextureData || "").trim();
@@ -1178,7 +1294,10 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
       ).catch(() => null);
     }
 
-    desiredState = sanitizeTokenResizeFlagState(nextState, { fallbackSrc: sourceFallback });
+    desiredState = sanitizeTokenResizeFlagState(nextState, {
+      fallbackSrc: sourceFallback,
+      storageKey: nextState.storageKey
+    });
   }
 
   let desiredSrc = String(tokenSrc || desiredState.src || sourceFallback).trim();
@@ -1214,7 +1333,9 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
     scaleY: desiredState.scaleY,
     offsetX: desiredState.offsetX,
     offsetY: desiredState.offsetY,
-    lockScale: desiredState.lockScale
+    lockScale: desiredState.lockScale,
+    keepHistory: desiredState.keepHistory,
+    storageKey: desiredState.storageKey
   };
   const updateData = buildTokenTextureUpdateData(desiredSrc, TOKEN_TEXTURE_FIT, nextFlagState);
   if (!updateData) return false;
