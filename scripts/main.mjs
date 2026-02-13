@@ -246,6 +246,114 @@ async function runMutedNotifications(task) {
   }
 }
 
+async function browseDataPath(path) {
+  const target = normalizeFoundryFilePath(path);
+  if (!target) return null;
+  const filePickerClass = getFilePickerImplementation();
+  if (!filePickerClass || typeof filePickerClass.browse !== "function") return null;
+
+  try {
+    return await runMutedNotifications(async () => (
+      filePickerClass.browse("data", target).catch(() => null)
+    ));
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function deleteDataPath(path, options = {}) {
+  const target = normalizeFoundryFilePath(path);
+  if (!target) return false;
+  const recursive = options?.recursive === true;
+  const filePickerClass = getFilePickerImplementation();
+  const legacyFilePickerClass = globalThis.FilePicker;
+  const socketDispatch = foundry?.helpers?.SocketInterface?.dispatch
+    || globalThis.SocketInterface?.dispatch;
+
+  const attempts = [];
+  const pushDeleteAttempts = pickerClass => {
+    if (!pickerClass || typeof pickerClass.delete !== "function") return;
+    attempts.push(() => pickerClass.delete("data", target, { recursive, notify: false }));
+    attempts.push(() => pickerClass.delete("data", target, { recursive }));
+    attempts.push(() => pickerClass.delete("data", target));
+  };
+  pushDeleteAttempts(filePickerClass);
+  if (legacyFilePickerClass !== filePickerClass) pushDeleteAttempts(legacyFilePickerClass);
+
+  if (typeof socketDispatch === "function") {
+    const socketPayloads = [
+      { action: "delete", storage: "data", target, recursive },
+      { action: "delete", storage: "data", path: target, recursive },
+      { action: "delete", source: "data", target, recursive },
+      { action: "delete", source: "data", path: target, recursive }
+    ];
+    for (const payload of socketPayloads) {
+      attempts.push(() => socketDispatch("manageFiles", payload));
+    }
+  }
+
+  for (const attempt of attempts) {
+    try {
+      const result = await runMutedNotifications(async () => Promise.resolve(attempt()));
+      if (result !== false) return true;
+    } catch (_error) {
+      // try next strategy
+    }
+  }
+  return false;
+}
+
+function buildTokenResizeActorDirectory(actor, state = {}, options = {}) {
+  const worldId = sanitizeFilenamePart(game.world?.id || "world", "world");
+  const storageKey = resolveTokenResizeStorageKey(actor, state, options);
+  if (!storageKey) return "";
+  return `${TOKEN_RESIZE_EXPORT_ROOT}/${worldId}/${storageKey}`;
+}
+
+async function deleteTokenResizeAssetsForActor(actor, options = {}) {
+  if (!actor) return false;
+  const actorId = String(options?.actorId || actor?.id || "").trim();
+  const actorStateRaw = actor?.getFlag?.(MODULE_ID, TOKEN_RESIZE_STATE_FLAG);
+  const actorState = (actorStateRaw && typeof actorStateRaw === "object") ? actorStateRaw : {};
+  if (!isTokenResizeActor(actor) && !actorState?.tokenSrc && !actorState?.tokenPath) return false;
+
+  const directory = buildTokenResizeActorDirectory(actor, actorState, { ...options, actorId });
+  if (!directory) return false;
+
+  const filePaths = new Set();
+  const browseResult = await browseDataPath(directory);
+  for (const filePath of browseResult?.files || []) {
+    const normalized = normalizeFoundryFilePath(filePath);
+    if (normalized) filePaths.add(normalized);
+  }
+
+  const flaggedPath = stripPathQueryAndHash(actorState?.tokenPath || actorState?.tokenSrc || "");
+  if (flaggedPath) filePaths.add(flaggedPath);
+
+  const expectedOutput = buildTokenResizeExportPath(
+    actor,
+    actorState,
+    { ...options, actorId, storageKey: actorState?.storageKey || "" },
+    inferTokenTextureOutputFormat(actorState?.src || actor?.img || "")
+  );
+  if (expectedOutput?.directory && expectedOutput?.filename) {
+    filePaths.add(normalizeFoundryFilePath(`${expectedOutput.directory}/${expectedOutput.filename}`));
+  }
+
+  let removedAny = false;
+  for (const filePath of filePaths) {
+    if (!filePath || !isImageFilePathLike(filePath)) continue;
+    if (!(filePath.startsWith(`${directory}/`) || filePath === normalizeFoundryFilePath(`${directory}/${expectedOutput?.filename || ""}`))) {
+      continue;
+    }
+    const removed = await deleteDataPath(filePath);
+    removedAny = removedAny || removed;
+  }
+
+  const removedDirectory = await deleteDataPath(directory, { recursive: true });
+  return Boolean(removedAny || removedDirectory);
+}
+
 async function dataUrlToBlob(dataUrl) {
   const raw = String(dataUrl || "").trim();
   if (!raw.startsWith("data:")) return null;
@@ -1140,6 +1248,19 @@ function getSceneTokenDocuments(scene) {
   }
 }
 
+function readTokenTextureState(tokenDocument) {
+  const currentSrc = String(foundry.utils.getProperty(tokenDocument, "texture.src") || tokenDocument?.img || "").trim();
+  return {
+    src: currentSrc,
+    srcBase: stripPathQueryAndHash(currentSrc),
+    scaleX: normalizeTokenScale(foundry.utils.getProperty(tokenDocument, "texture.scaleX"), 1),
+    scaleY: normalizeTokenScale(foundry.utils.getProperty(tokenDocument, "texture.scaleY"), 1),
+    offsetX: normalizeTokenOffset(foundry.utils.getProperty(tokenDocument, "texture.offsetX"), 0),
+    offsetY: normalizeTokenOffset(foundry.utils.getProperty(tokenDocument, "texture.offsetY"), 0),
+    fit: String(foundry.utils.getProperty(tokenDocument, "texture.fit") || "").trim() || TOKEN_TEXTURE_FIT
+  };
+}
+
 async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
   const tokenDocument = resolveTokenDocumentLike(tokenDoc);
   if (!(tokenDocument?.documentName === "Token" && typeof tokenDocument.update === "function")) return false;
@@ -1158,7 +1279,38 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
   const rawState = (actorFlag && typeof actorFlag === "object")
     ? { ...actorFlag }
     : ((tokenFlag && typeof tokenFlag === "object") ? { ...tokenFlag } : null);
-  if (!rawState?.src && !rawState?.tokenSrc && !rawState?.tokenPath) return false;
+  const hasStoredTokenState = Boolean(rawState?.src || rawState?.tokenSrc || rawState?.tokenPath);
+  if (!hasStoredTokenState) {
+    if (options?.allowPortraitFallback !== true) return false;
+    const fallbackPortraitSrc = stripPathQueryAndHash(actor?.img || worldActor?.img || "");
+    const isFallbackPortraitImage = Boolean(
+      fallbackPortraitSrc
+      && (isImageFilePathLike(fallbackPortraitSrc) || fallbackPortraitSrc.startsWith("data:image/"))
+    );
+    if (!isFallbackPortraitImage) return false;
+
+    const current = readTokenTextureState(tokenDocument);
+    const epsilon = 0.0001;
+    const needsFallbackUpdate = current.srcBase !== fallbackPortraitSrc
+      || Math.abs(current.scaleX - 1) > epsilon
+      || Math.abs(current.scaleY - 1) > epsilon
+      || Math.abs(current.offsetX - 0) > epsilon
+      || Math.abs(current.offsetY - 0) > epsilon
+      || current.fit !== TOKEN_TEXTURE_FIT;
+    if (!needsFallbackUpdate) return false;
+
+    const fallbackUpdate = buildTokenTextureUpdateData(
+      appendCacheBuster(fallbackPortraitSrc) || fallbackPortraitSrc,
+      TOKEN_TEXTURE_FIT,
+      null
+    );
+    if (!fallbackUpdate) return false;
+    const updatedFallbackDoc = await tokenDocument.update(
+      fallbackUpdate,
+      { bloodmanSkipActorImageSync: true }
+    ).catch(() => null);
+    return Boolean(updatedFallbackDoc);
+  }
 
   const sourceFallback = String(rawState?.src || actor?.img || "icons/svg/mystery-man.svg").trim() || "icons/svg/mystery-man.svg";
   const resolvedStorageKey = resolveTokenResizeStorageKey(actor, rawState, options);
@@ -1242,22 +1394,16 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
   }
   if (!desiredSrc) return false;
 
-  const currentSrc = String(foundry.utils.getProperty(tokenDocument, "texture.src") || tokenDocument?.img || "").trim();
-  const currentSrcBase = stripPathQueryAndHash(currentSrc);
+  const current = readTokenTextureState(tokenDocument);
   const desiredSrcBase = stripPathQueryAndHash(desiredSrc);
-  const currentScaleX = normalizeTokenScale(foundry.utils.getProperty(tokenDocument, "texture.scaleX"), 1);
-  const currentScaleY = normalizeTokenScale(foundry.utils.getProperty(tokenDocument, "texture.scaleY"), 1);
-  const currentOffsetX = normalizeTokenOffset(foundry.utils.getProperty(tokenDocument, "texture.offsetX"), 0);
-  const currentOffsetY = normalizeTokenOffset(foundry.utils.getProperty(tokenDocument, "texture.offsetY"), 0);
-  const currentFit = String(foundry.utils.getProperty(tokenDocument, "texture.fit") || "").trim() || TOKEN_TEXTURE_FIT;
 
   const epsilon = 0.0001;
-  const needsUpdate = currentSrcBase !== desiredSrcBase
-    || Math.abs(currentScaleX - 1) > epsilon
-    || Math.abs(currentScaleY - 1) > epsilon
-    || Math.abs(currentOffsetX - 0) > epsilon
-    || Math.abs(currentOffsetY - 0) > epsilon
-    || currentFit !== TOKEN_TEXTURE_FIT;
+  const needsUpdate = current.srcBase !== desiredSrcBase
+    || Math.abs(current.scaleX - 1) > epsilon
+    || Math.abs(current.scaleY - 1) > epsilon
+    || Math.abs(current.offsetX - 0) > epsilon
+    || Math.abs(current.offsetY - 0) > epsilon
+    || current.fit !== TOKEN_TEXTURE_FIT;
   if (!needsUpdate) return false;
 
   const nextFlagState = {
@@ -1940,19 +2086,72 @@ Hooks.on("canvasReady", async () => {
   if (!isTokenResizeEnabled()) return;
   for (const token of canvas?.tokens?.placeables || []) {
     try {
-      await applyStoredTokenResizeToTokenDocument(token?.document || token);
+      await applyStoredTokenResizeToTokenDocument(token?.document || token, { allowPortraitFallback: true });
     } catch (error) {
       console.warn(`[${MODULE_ID}] failed to apply stored token resize on canvasReady`, error);
     }
   }
 });
 
-Hooks.on("createToken", async tokenDoc => {
+Hooks.on("preCreateToken", (tokenDoc, _data, options, userId) => {
   if (!isTokenResizeEnabled()) return;
+  const currentUserId = String(game.user?.id || "").trim();
+  const creatingUserId = String(userId || "").trim();
+  if (currentUserId && creatingUserId && currentUserId !== creatingUserId) return;
+
+  const tokenDocument = resolveTokenDocumentLike(tokenDoc);
+  const tokenActorId = String(tokenDocument?.actorId || tokenDocument?.actor?.id || "").trim();
+  const actor = tokenActorId ? (game.actors?.get?.(tokenActorId) || tokenDocument?.actor || null) : (tokenDocument?.actor || null);
+  if (!actor) return;
+
+  const actorFlag = actor?.getFlag?.(MODULE_ID, TOKEN_RESIZE_STATE_FLAG);
+  const actorHasStoredToken = Boolean(actorFlag && typeof actorFlag === "object" && (actorFlag.src || actorFlag.tokenSrc || actorFlag.tokenPath));
+  const desiredBaseSrc = stripPathQueryAndHash(
+    actorHasStoredToken
+      ? (actorFlag?.tokenPath || actorFlag?.tokenSrc || actorFlag?.src || actor?.img || "")
+      : (actor?.img || actor?.prototypeToken?.texture?.src || actor?.prototypeToken?.img || "")
+  );
+  if (!desiredBaseSrc) return;
+  const isDesiredImage = isImageFilePathLike(desiredBaseSrc) || desiredBaseSrc.startsWith("data:image/");
+  if (!isDesiredImage) return;
+
+  const desiredDisplaySrc = appendCacheBuster(desiredBaseSrc) || desiredBaseSrc;
+  const preFlagState = actorHasStoredToken
+    ? {
+      ...sanitizeTokenResizeFlagState(actorFlag, {
+        fallbackSrc: stripPathQueryAndHash(actor?.img || actorFlag?.src || "icons/svg/mystery-man.svg"),
+        storageKey: resolveTokenResizeStorageKey(actor, actorFlag, { actorId: actor?.id })
+      }),
+      tokenSrc: desiredBaseSrc,
+      tokenPath: stripPathQueryAndHash(actorFlag?.tokenPath || desiredBaseSrc)
+    }
+    : null;
+  const updateData = buildTokenTextureUpdateData(desiredDisplaySrc, TOKEN_TEXTURE_FIT, preFlagState);
+  if (!updateData) return;
+  if (typeof tokenDocument?.updateSource === "function") tokenDocument.updateSource(updateData);
+  if (options && typeof options === "object") options.bloodmanTokenPreApplied = true;
+});
+
+Hooks.on("createToken", async (tokenDoc, options) => {
+  if (!isTokenResizeEnabled()) return;
+  if (options?.bloodmanTokenPreApplied) return;
   try {
-    await applyStoredTokenResizeToTokenDocument(tokenDoc);
+    await applyStoredTokenResizeToTokenDocument(tokenDoc, { allowPortraitFallback: true });
   } catch (error) {
     console.warn(`[${MODULE_ID}] failed to apply stored token resize on createToken`, error);
+  }
+});
+
+Hooks.on("deleteActor", async (actor, _options, userId) => {
+  const currentUserId = String(game.user?.id || "").trim();
+  const deletingUserId = String(userId || "").trim();
+  if (!currentUserId || !deletingUserId || currentUserId !== deletingUserId) return;
+  if (!game.user?.isGM) return;
+
+  try {
+    await deleteTokenResizeAssetsForActor(actor, { actorId: actor?.id });
+  } catch (error) {
+    console.warn(`[${MODULE_ID}] failed to clean token resize files on actor deletion`, error);
   }
 });
 
