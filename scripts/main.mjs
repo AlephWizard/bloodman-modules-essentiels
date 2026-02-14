@@ -86,6 +86,8 @@ if (!api || typeof api.openGmNotesWindow !== "function") {
 const PROCESSED_REQUESTS = new Map();
 const DISPLAYABLE_IMAGE_CACHE = new Map();
 const TRANSIENT_COMPENDIUM_ACTOR_CREATIONS = new Map();
+const IMAGE_CONTEXT_POPOUT_HANDLED_FLAG = "__bjdImageContextPopoutHandled";
+let IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = null;
 
 function t(key, fallback, data = null) {
   const localized = data
@@ -1276,6 +1278,94 @@ function isImageContextPopoutEnabled() {
   return Boolean(game.settings?.get?.(MODULE_ID, SETTING_ENABLE_IMAGE_CONTEXT_POPOUT));
 }
 
+function markImageContextPopoutEventHandled(event) {
+  if (!event) return;
+  try {
+    event[IMAGE_CONTEXT_POPOUT_HANDLED_FLAG] = true;
+  } catch (_error) {
+    // non-fatal marker failure
+  }
+}
+
+function wasImageContextPopoutEventHandled(event) {
+  if (!event) return false;
+  try {
+    return Boolean(event[IMAGE_CONTEXT_POPOUT_HANDLED_FLAG]);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveImageFromContextMenuEvent(event) {
+  const eventPath = typeof event?.composedPath === "function" ? event.composedPath() : [];
+  for (const node of eventPath) {
+    const tagName = String(node?.tagName || "").trim().toLowerCase();
+    if (tagName === "img") return node;
+    if (node && typeof node.closest === "function") {
+      const closestImage = node.closest("img");
+      if (closestImage) return closestImage;
+    }
+  }
+
+  const rawTarget = event?.target;
+  if (!rawTarget) return null;
+  if (String(rawTarget?.tagName || "").trim().toLowerCase() === "img") return rawTarget;
+  const targetElement = typeof rawTarget.closest === "function"
+    ? rawTarget
+    : (rawTarget?.parentElement || null);
+  if (!targetElement) return null;
+  if (typeof targetElement.closest === "function") {
+    const closestImage = targetElement.closest("img");
+    if (closestImage) return closestImage;
+  }
+  return null;
+}
+
+function imageBelongsToApplicationWindow(image) {
+  if (!image) return false;
+  if (typeof image.closest === "function" && image.closest(".window-app, .application")) return true;
+  try {
+    const frameElement = image.ownerDocument?.defaultView?.frameElement || null;
+    if (frameElement && typeof frameElement.closest === "function") {
+      return Boolean(frameElement.closest(".window-app, .application"));
+    }
+  } catch (_error) {
+    // Ignore inaccessible frame element contexts.
+  }
+  return false;
+}
+
+function openImagePopoutFromContextMenuEvent(event, app = null) {
+  if (!isImageContextPopoutEnabled()) return false;
+  if (!event || wasImageContextPopoutEventHandled(event)) return false;
+
+  const image = resolveImageFromContextMenuEvent(event);
+  if (!image) return false;
+  if (!imageBelongsToApplicationWindow(image)) return false;
+
+  const imageSrc = String(
+    image.currentSrc
+    || image.src
+    || image.getAttribute?.("src")
+    || ""
+  ).trim();
+  if (!imageSrc) return false;
+
+  markImageContextPopoutEventHandled(event);
+  if (typeof event.preventDefault === "function") event.preventDefault();
+  if (typeof event.stopPropagation === "function") event.stopPropagation();
+
+  try {
+    const title = String(image.alt || image.title || app?.title || "").trim() || "Image";
+    const popout = new ImagePopout(imageSrc, { title, shareable: true });
+    popout.render(true);
+    return true;
+  } catch (error) {
+    console.warn(`[${MODULE_ID}] failed to open image popout from context menu`, error);
+    return false;
+  }
+}
+
 function resolveImageContextPopoutRoot(html) {
   const root = html?.[0] || html;
   if (!root || typeof root.addEventListener !== "function") return null;
@@ -1296,6 +1386,99 @@ function refreshOpenSheetsForImageContextPopout() {
   }
 }
 
+function clearImageContextPopoutGlobalBindings() {
+  const binding = IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING;
+  if (!binding) return;
+  for (const cleanup of binding.cleanups || []) {
+    if (typeof cleanup !== "function") continue;
+    try {
+      cleanup();
+    } catch (_error) {
+      // non-fatal cleanup error
+    }
+  }
+  IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = null;
+}
+
+function installImageContextPopoutGlobalBindings() {
+  clearImageContextPopoutGlobalBindings();
+
+  const cleanups = [];
+  const boundDocuments = new WeakSet();
+  const boundIframes = new WeakSet();
+
+  function bindDocument(doc) {
+    if (!doc || typeof doc.addEventListener !== "function") return;
+    if (boundDocuments.has(doc)) return;
+    boundDocuments.add(doc);
+
+    const contextMenuHandler = event => {
+      openImagePopoutFromContextMenuEvent(event, null);
+    };
+    doc.addEventListener("contextmenu", contextMenuHandler, true);
+    cleanups.push(() => {
+      doc.removeEventListener("contextmenu", contextMenuHandler, true);
+    });
+
+    if (typeof doc.querySelectorAll === "function") {
+      for (const frame of doc.querySelectorAll("iframe")) {
+        bindIframe(frame);
+      }
+    }
+
+    const observedRoot = doc.body || doc.documentElement;
+    if (!observedRoot || typeof MutationObserver !== "function") return;
+    const observer = new MutationObserver(mutations => {
+      for (const mutation of mutations || []) {
+        for (const node of mutation.addedNodes || []) {
+          if (!node || typeof node !== "object") continue;
+          const tagName = String(node.tagName || "").trim().toLowerCase();
+          if (tagName === "iframe") bindIframe(node);
+          if (typeof node.querySelectorAll === "function") {
+            for (const frame of node.querySelectorAll("iframe")) {
+              bindIframe(frame);
+            }
+          }
+        }
+      }
+    });
+    observer.observe(observedRoot, { childList: true, subtree: true });
+    cleanups.push(() => observer.disconnect());
+  }
+
+  function bindIframe(frame) {
+    if (!frame || typeof frame.addEventListener !== "function") return;
+    if (boundIframes.has(frame)) return;
+    boundIframes.add(frame);
+
+    const bindFrameDocument = () => {
+      try {
+        const frameDocument = frame.contentDocument || frame.contentWindow?.document || null;
+        if (frameDocument) bindDocument(frameDocument);
+      } catch (_error) {
+        // Ignore inaccessible iframe documents.
+      }
+    };
+
+    bindFrameDocument();
+    frame.addEventListener("load", bindFrameDocument, true);
+    cleanups.push(() => {
+      frame.removeEventListener("load", bindFrameDocument, true);
+    });
+  }
+
+  bindDocument(document);
+  IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = { cleanups };
+}
+
+function refreshImageContextPopoutBindings() {
+  clearImageContextPopoutGlobalBindings();
+  if (isImageContextPopoutEnabled()) {
+    installImageContextPopoutGlobalBindings();
+  }
+  refreshOpenSheetsForImageContextPopout();
+}
+
 function bindImageContextPopoutToSheet(app, html) {
   const root = resolveImageContextPopoutRoot(html);
   if (!root) return;
@@ -1310,48 +1493,15 @@ function bindImageContextPopoutToSheet(app, html) {
   if (!isImageContextPopoutEnabled()) return;
 
   const cleanups = [];
-  const bindOnContextRoot = contextRoot => {
-    if (!contextRoot || typeof contextRoot.addEventListener !== "function") return;
-
-    const contextMenuHandler = event => {
-      if (!isImageContextPopoutEnabled()) return;
-      if (event.defaultPrevented) return;
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target) return;
-      const image = target.closest("img");
-      if (!image || !contextRoot.contains(image)) return;
-
-      const imageSrc = String(image.currentSrc || image.src || "").trim();
-      if (!imageSrc) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      try {
-        const title = String(image.alt || image.title || app?.title || "").trim() || "Image";
-        const popout = new ImagePopout(imageSrc, { title, shareable: true });
-        popout.render(true);
-      } catch (error) {
-        console.warn(`[${MODULE_ID}] failed to open image popout from context menu`, error);
-      }
-    };
-
-    contextRoot.addEventListener("contextmenu", contextMenuHandler, true);
-    cleanups.push(() => {
-      contextRoot.removeEventListener("contextmenu", contextMenuHandler, true);
-    });
+  const contextMenuHandler = event => {
+    const image = resolveImageFromContextMenuEvent(event);
+    if (!image || !root.contains(image)) return;
+    openImagePopoutFromContextMenuEvent(event, app);
   };
-
-  bindOnContextRoot(root);
-
-  for (const frame of root.querySelectorAll("iframe")) {
-    try {
-      const frameBody = frame?.contentDocument?.body;
-      if (frameBody) bindOnContextRoot(frameBody);
-    } catch (_error) {
-      // Ignore inaccessible iframe documents.
-    }
-  }
+  root.addEventListener("contextmenu", contextMenuHandler, true);
+  cleanups.push(() => {
+    root.removeEventListener("contextmenu", contextMenuHandler, true);
+  });
 
   root.__bjdImageContextPopoutCleanups = cleanups;
 }
@@ -2325,7 +2475,7 @@ function registerModuleSettings() {
     type: Boolean,
     default: true,
     onChange: () => {
-      refreshOpenSheetsForImageContextPopout();
+      refreshImageContextPopoutBindings();
     }
   });
 
@@ -2761,6 +2911,7 @@ Hooks.once("init", () => {
 
 Hooks.once("ready", async () => {
   registerSocketHandler();
+  refreshImageContextPopoutBindings();
   await ensureGmHotbarMacro();
   await ensureTileVisibilityHotbarMacro();
   await ensureNotesHotbarMacro();
@@ -2782,6 +2933,11 @@ for (const hookName of IMAGE_CONTEXT_POPOUT_RENDER_HOOKS) {
     bindImageContextPopoutToSheet(app, html);
   });
 }
+
+Hooks.on("renderApplication", (app, html) => {
+  if (!isImageContextPopoutCandidateApp(app)) return;
+  bindImageContextPopoutToSheet(app, html);
+});
 
 Hooks.on("dropCanvasData", (canvasRef, dropData) => {
   if (!isTransientCompendiumActorDropsEnabled()) return;
