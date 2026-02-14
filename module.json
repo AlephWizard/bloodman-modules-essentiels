@@ -2,7 +2,7 @@
   "id": "bloodman-modules-essentiels",
   "title": "Bloodman - Modules Essentiels",
   "description": "Module Foundry contenant les fonctionnalites essentielles Bloodman (incluant le jet du destin).",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "compatibility": {
     "minimum": 13,
     "verified": 13

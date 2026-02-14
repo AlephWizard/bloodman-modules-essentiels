@@ -33,7 +33,6 @@ const NOTES_JOURNAL_NAME = "Bloodman - Notes GM";
 const NOTES_JOURNAL_PAGE_NAME = "Notes";
 const SETTING_ENABLE_TOKEN_RESIZE = "enableTokenResize";
 const SETTING_ENABLE_TRANSIENT_COMPENDIUM_ACTOR_DROPS = "enableTransientCompendiumActorDrops";
-const TRANSIENT_COMPENDIUM_TARGET_PACK = "bloodman-classique-compedium.BloodmanBasePNJ";
 const TRANSIENT_COMPENDIUM_ACTOR_FLAG = "transientCompendiumActor";
 const TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG = "transientCompendiumSourceUuid";
 const TRANSIENT_COMPENDIUM_SOURCE_PACK_FLAG = "transientCompendiumSourcePack";
@@ -1297,18 +1296,15 @@ function isCompendiumDropData(dropData = {}) {
   return dropUuid.startsWith("Compendium.") || dropPack.length > 0;
 }
 
-function isTargetBloodmanPnjCompendiumActorDrop(dropData = {}) {
+function isCompendiumActorCanvasDrop(dropData = {}) {
   const dropType = String(dropData?.type || "").trim();
   const dropPack = String(dropData?.pack || "").trim();
-  const dropUuid = String(dropData?.uuid || "").trim();
+  const dropUuid = String(dropData?.uuid || "").trim().toLowerCase();
 
-  const dropPackLower = dropPack.toLowerCase();
-  const targetPackLower = TRANSIENT_COMPENDIUM_TARGET_PACK.toLowerCase();
-  const isTargetPack = dropPackLower === targetPackLower;
-  const isTargetUuid = dropUuid.toLowerCase().startsWith(`compendium.${targetPackLower}.actor.`);
-  const isActorDrop = dropType === "Actor" || dropUuid.includes(".Actor.");
+  const isActorDrop = dropType === "Actor" || dropUuid.includes(".actor.");
+  if (!isActorDrop) return false;
 
-  return isActorDrop && (isTargetPack || isTargetUuid);
+  return Boolean(dropPack || dropUuid.startsWith("compendium."));
 }
 
 function getTransientCompendiumActorSourceUuid(actor) {
@@ -1529,10 +1525,6 @@ async function handleTransientCompendiumActorCanvasDrop(canvasRef, dropData = {}
       "BJD.Notify.CompendiumDropActorLoadFailed",
       "Drop compendium: impossible de charger cet acteur."
     ));
-    return false;
-  }
-
-  if (String(sourceActor.type || "").trim() !== "personnage-non-joueur") {
     return false;
   }
 
@@ -2668,7 +2660,7 @@ Hooks.on("dropCanvasData", (canvasRef, dropData) => {
   if (!isTransientCompendiumActorDropsEnabled()) return;
   if (!canvasRef?.scene) return;
   if (!isCompendiumDropData(dropData)) return;
-  if (!isTargetBloodmanPnjCompendiumActorDrop(dropData)) return;
+  if (!isCompendiumActorCanvasDrop(dropData)) return;
 
   void handleTransientCompendiumActorCanvasDrop(canvasRef, dropData);
   return false;

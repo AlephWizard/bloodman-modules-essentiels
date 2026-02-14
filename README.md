@@ -22,7 +22,7 @@ Un reglage monde est disponible:
 
 - `Drop compendium sans doublon d'acteur`
 
-Quand il est active, le drop d'un PNJ depuis le pack `bloodman-classique-compedium.BloodmanBasePNJ` vers la scene cree un acteur transitoire cache, pour eviter un doublon visible dans le menu Acteurs.
+Quand il est active, le drop d'un acteur depuis un compendium vers la scene cree un acteur transitoire cache, pour eviter un doublon visible dans le menu Acteurs.
 
 ## Macro
 
