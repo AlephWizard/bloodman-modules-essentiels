@@ -33,6 +33,7 @@ const NOTES_JOURNAL_NAME = "Bloodman - Notes GM";
 const NOTES_JOURNAL_PAGE_NAME = "Notes";
 const SETTING_ENABLE_TOKEN_RESIZE = "enableTokenResize";
 const SETTING_ENABLE_TRANSIENT_COMPENDIUM_ACTOR_DROPS = "enableTransientCompendiumActorDrops";
+const TRANSIENT_COMPENDIUM_TARGET_PACK = "bloodman-classique-compedium.BloodmanBasePNJ";
 const TRANSIENT_COMPENDIUM_ACTOR_FLAG = "transientCompendiumActor";
 const TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG = "transientCompendiumSourceUuid";
 const TRANSIENT_COMPENDIUM_SOURCE_PACK_FLAG = "transientCompendiumSourcePack";
@@ -1296,6 +1297,20 @@ function isCompendiumDropData(dropData = {}) {
   return dropUuid.startsWith("Compendium.") || dropPack.length > 0;
 }
 
+function isTargetBloodmanPnjCompendiumActorDrop(dropData = {}) {
+  const dropType = String(dropData?.type || "").trim();
+  const dropPack = String(dropData?.pack || "").trim();
+  const dropUuid = String(dropData?.uuid || "").trim();
+
+  const dropPackLower = dropPack.toLowerCase();
+  const targetPackLower = TRANSIENT_COMPENDIUM_TARGET_PACK.toLowerCase();
+  const isTargetPack = dropPackLower === targetPackLower;
+  const isTargetUuid = dropUuid.toLowerCase().startsWith(`compendium.${targetPackLower}.actor.`);
+  const isActorDrop = dropType === "Actor" || dropUuid.includes(".Actor.");
+
+  return isActorDrop && (isTargetPack || isTargetUuid);
+}
+
 function getTransientCompendiumActorSourceUuid(actor) {
   return String(actor?.getFlag?.(MODULE_ID, TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG) || "").trim();
 }
@@ -1517,6 +1532,10 @@ async function handleTransientCompendiumActorCanvasDrop(canvasRef, dropData = {}
     return false;
   }
 
+  if (String(sourceActor.type || "").trim() !== "personnage-non-joueur") {
+    return false;
+  }
+
   const transientActor = await getOrCreateTransientCompendiumActor(sourceActor, dropData);
   if (!transientActor) {
     ui.notifications?.warn(t(
@@ -1534,8 +1553,6 @@ async function handleTransientCompendiumActorCanvasDrop(canvasRef, dropData = {}
     ));
     return false;
   }
-
-  await cleanupTransientCompendiumActors({ exceptActorIds: [transientActor.id] });
   return true;
 }
 
@@ -2198,8 +2215,6 @@ function registerModuleSettings() {
     default: false,
     onChange: async () => {
       ui.actors?.render?.(false);
-      if (!game.ready || !game.user?.isGM) return;
-      await cleanupTransientCompendiumActors();
     }
   });
 
@@ -2638,10 +2653,10 @@ Hooks.once("ready", async () => {
   await ensureGmHotbarMacro();
   await ensureTileVisibilityHotbarMacro();
   await ensureNotesHotbarMacro();
-  await cleanupTransientCompendiumActors();
 });
 
 Hooks.on("renderActorDirectory", (_app, html) => {
+  if (!isTransientCompendiumActorDropsEnabled()) return;
   removeTransientCompendiumActorsFromDirectory(html);
 });
 
@@ -2653,7 +2668,7 @@ Hooks.on("dropCanvasData", (canvasRef, dropData) => {
   if (!isTransientCompendiumActorDropsEnabled()) return;
   if (!canvasRef?.scene) return;
   if (!isCompendiumDropData(dropData)) return;
-  if (String(dropData?.type || "").trim() !== "Actor") return;
+  if (!isTargetBloodmanPnjCompendiumActorDrop(dropData)) return;
 
   void handleTransientCompendiumActorCanvasDrop(canvasRef, dropData);
   return false;
@@ -2716,20 +2731,6 @@ Hooks.on("createToken", async tokenDoc => {
   } catch (error) {
     console.warn(`[${MODULE_ID}] failed to apply stored token resize on createToken`, error);
   }
-});
-
-Hooks.on("deleteToken", async tokenDoc => {
-  if (!game.user?.isGM) return;
-  const actorId = String(tokenDoc?.actorId || "").trim();
-  if (!actorId) return;
-  const actor = game.actors?.get?.(actorId);
-  if (!isTransientCompendiumActor(actor)) return;
-  await cleanupTransientCompendiumActors();
-});
-
-Hooks.on("deleteScene", async () => {
-  if (!game.user?.isGM) return;
-  await cleanupTransientCompendiumActors();
 });
 
 Hooks.on("deleteActor", async (actor, _options, userId) => {

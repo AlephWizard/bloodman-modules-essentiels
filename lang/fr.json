@@ -35,7 +35,7 @@
       },
       "TransientCompendiumActorDrops": {
         "Name": "Drop compendium sans doublon d'acteur",
-        "Hint": "Si active, le drop d'un acteur depuis un compendium vers la scene cree un acteur transitoire cache pour eviter un doublon visible dans le menu Acteurs."
+        "Hint": "Si active, le drop d'un PNJ du pack BloodmanBasePNJ vers la scene cree un acteur transitoire cache pour eviter un doublon visible dans le menu Acteurs."
       }
     },
     "TokenResize": {
