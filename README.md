@@ -16,6 +16,14 @@ Les PNG utilises par le redimensionnement de token sont desormais stockes hors d
 
 Le module gere automatiquement la migration logique des anciens chemins `modules/bloodman-modules-essentiels/images/token-resize/...`.
 
+## Drop Compendium
+
+Un reglage monde est disponible:
+
+- `Drop compendium sans doublon d'acteur`
+
+Quand il est active, un acteur glisse depuis un compendium vers la scene est cree comme acteur transitoire cache, pour eviter un doublon visible dans le menu Acteurs.
+
 ## Macro
 
 Creer une macro de type Script et coller:

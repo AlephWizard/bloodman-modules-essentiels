@@ -32,6 +32,10 @@
       "TokenResize": {
         "Name": "Redimensionnement de token",
         "Hint": "Le portrait conserve le Finder natif. Utilisez le bouton Token sur la fiche pour cadrer et generer le PNG de token."
+      },
+      "TransientCompendiumActorDrops": {
+        "Name": "Drop compendium sans doublon d'acteur",
+        "Hint": "Si active, le drop d'un acteur depuis un compendium vers la scene cree un acteur transitoire cache pour eviter un doublon visible dans le menu Acteurs."
       }
     },
     "TokenResize": {
@@ -57,7 +61,10 @@
       "TilesShown": "Toutes les tuiles de la scene sont maintenant visibles.",
       "TilesHidden": "Toutes les tuiles de la scene sont maintenant cachees.",
       "NotesSheetUnavailable": "Aucune feuille de notes disponible.",
-      "NotesOpenFailed": "Impossible d'ouvrir la fenetre de notes."
+      "NotesOpenFailed": "Impossible d'ouvrir la fenetre de notes.",
+      "CompendiumDropActorLoadFailed": "Drop compendium: impossible de charger cet acteur.",
+      "CompendiumDropActorCreateFailed": "Drop compendium: impossible de creer l'acteur transitoire.",
+      "CompendiumDropTokenCreateFailed": "Drop compendium: impossible de creer le token sur la scene."
     }
   }
 }
