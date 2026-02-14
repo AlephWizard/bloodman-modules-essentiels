@@ -33,6 +33,7 @@ const NOTES_JOURNAL_NAME = "Bloodman - Notes GM";
 const NOTES_JOURNAL_PAGE_NAME = "Notes";
 const SETTING_ENABLE_TOKEN_RESIZE = "enableTokenResize";
 const SETTING_ENABLE_TRANSIENT_COMPENDIUM_ACTOR_DROPS = "enableTransientCompendiumActorDrops";
+const SETTING_ENABLE_IMAGE_CONTEXT_POPOUT = "enableImageContextPopout";
 const TRANSIENT_COMPENDIUM_ACTOR_FLAG = "transientCompendiumActor";
 const TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG = "transientCompendiumSourceUuid";
 const TRANSIENT_COMPENDIUM_SOURCE_PACK_FLAG = "transientCompendiumSourcePack";
@@ -53,6 +54,16 @@ const TOKEN_RESIZE_ACTOR_TYPES = new Set(["personnage", "personnage-non-joueur"]
 const IMAGE_DISPLAY_RETRY_DELAYS = Object.freeze([0, 120, 260]);
 const IMAGE_DISPLAY_CACHE_TTL_MS = 5 * 60 * 1000;
 const IMAGE_DISPLAY_CACHE_MAX = 512;
+const IMAGE_CONTEXT_POPOUT_RENDER_HOOKS = Object.freeze([
+  "renderActorSheet",
+  "renderItemSheet",
+  "renderJournalTextPageSheet",
+  "renderJournalEntryPageTextSheet",
+  "renderJournalEntryPageSheet",
+  "renderJournalPageSheet",
+  "renderJournalEntrySheet",
+  "renderJournalSheet"
+]);
 const GM_MACRO_COMMAND = `const api = game.modules.get("${MODULE_ID}")?.api;
 if (!api || typeof api.rollJetDestin !== "function") {
   ui.notifications?.warn("Module ${MODULE_ID} inactif ou API indisponible.");
@@ -1261,6 +1272,90 @@ function bindTokenResizeToActorSheet(app, html) {
   });
 }
 
+function isImageContextPopoutEnabled() {
+  return Boolean(game.settings?.get?.(MODULE_ID, SETTING_ENABLE_IMAGE_CONTEXT_POPOUT));
+}
+
+function resolveImageContextPopoutRoot(html) {
+  const root = html?.[0] || html;
+  if (!root || typeof root.addEventListener !== "function") return null;
+  return root;
+}
+
+function isImageContextPopoutCandidateApp(app) {
+  const constructorName = String(app?.constructor?.name || "").trim().toLowerCase();
+  if (constructorName.includes("sheet")) return true;
+  const documentName = String(app?.document?.documentName || app?.object?.documentName || "").trim().toLowerCase();
+  return documentName === "actor" || documentName === "item" || documentName === "journalentry" || documentName === "journalentrypage";
+}
+
+function refreshOpenSheetsForImageContextPopout() {
+  for (const app of Object.values(ui.windows || {})) {
+    if (!isImageContextPopoutCandidateApp(app)) continue;
+    app.render?.(false);
+  }
+}
+
+function bindImageContextPopoutToSheet(app, html) {
+  const root = resolveImageContextPopoutRoot(html);
+  if (!root) return;
+
+  if (Array.isArray(root.__bjdImageContextPopoutCleanups)) {
+    for (const cleanup of root.__bjdImageContextPopoutCleanups) {
+      if (typeof cleanup === "function") cleanup();
+    }
+    root.__bjdImageContextPopoutCleanups = null;
+  }
+
+  if (!isImageContextPopoutEnabled()) return;
+
+  const cleanups = [];
+  const bindOnContextRoot = contextRoot => {
+    if (!contextRoot || typeof contextRoot.addEventListener !== "function") return;
+
+    const contextMenuHandler = event => {
+      if (!isImageContextPopoutEnabled()) return;
+      if (event.defaultPrevented) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      const image = target.closest("img");
+      if (!image || !contextRoot.contains(image)) return;
+
+      const imageSrc = String(image.currentSrc || image.src || "").trim();
+      if (!imageSrc) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      try {
+        const title = String(image.alt || image.title || app?.title || "").trim() || "Image";
+        const popout = new ImagePopout(imageSrc, { title, shareable: true });
+        popout.render(true);
+      } catch (error) {
+        console.warn(`[${MODULE_ID}] failed to open image popout from context menu`, error);
+      }
+    };
+
+    contextRoot.addEventListener("contextmenu", contextMenuHandler, true);
+    cleanups.push(() => {
+      contextRoot.removeEventListener("contextmenu", contextMenuHandler, true);
+    });
+  };
+
+  bindOnContextRoot(root);
+
+  for (const frame of root.querySelectorAll("iframe")) {
+    try {
+      const frameBody = frame?.contentDocument?.body;
+      if (frameBody) bindOnContextRoot(frameBody);
+    } catch (_error) {
+      // Ignore inaccessible iframe documents.
+    }
+  }
+
+  root.__bjdImageContextPopoutCleanups = cleanups;
+}
+
 function refreshOpenActorSheetsForTokenResize() {
   for (const app of Object.values(ui.windows || {})) {
     const actor = app?.actor;
@@ -1564,6 +1659,9 @@ function readTokenTextureState(tokenDocument) {
 async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
   const tokenDocument = resolveTokenDocumentLike(tokenDoc);
   if (!(tokenDocument?.documentName === "Token" && typeof tokenDocument.update === "function")) return false;
+  if (typeof tokenDocument.canUserModify === "function" && !tokenDocument.canUserModify(game.user, "update")) {
+    return false;
+  }
 
   const tokenActorId = String(tokenDocument?.actorId || tokenDocument?.actor?.id || "").trim();
   const worldActor = tokenActorId ? game.actors?.get?.(tokenActorId) : null;
@@ -1664,7 +1762,10 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
       appendCacheBuster(nextState.tokenSrc) || nextState.tokenSrc
     );
 
-    if (actorUpdateTarget?.update) {
+    const canUpdateActor = typeof actorUpdateTarget?.canUserModify === "function"
+      ? actorUpdateTarget.canUserModify(game.user, "update")
+      : Boolean(actorUpdateTarget?.update);
+    if (canUpdateActor && actorUpdateTarget?.update) {
       await actorUpdateTarget.update(
         {
           ...(prototypeTextureUpdate || {}),
@@ -2210,6 +2311,24 @@ function registerModuleSettings() {
     }
   });
 
+  game.settings.register(MODULE_ID, SETTING_ENABLE_IMAGE_CONTEXT_POPOUT, {
+    name: t(
+      "BJD.Settings.ImageContextPopout.Name",
+      "Restaurer clic droit image (popout partageable)"
+    ),
+    hint: t(
+      "BJD.Settings.ImageContextPopout.Hint",
+      "Si active, un clic droit sur une image (fiches/journaux) ouvre l'image en popout partageable avec les joueurs."
+    ),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: () => {
+      refreshOpenSheetsForImageContextPopout();
+    }
+  });
+
   game.settings.register(MODULE_ID, SETTING_ENABLE_GM_MACRO, {
     name: t("BJD.Settings.EnableGmMacro.Name", "Activer la macro automatique du destin"),
     hint: t("BJD.Settings.EnableGmMacro.Hint", "Cree ou met a jour la macro et l'attribue automatiquement au slot configure."),
@@ -2654,7 +2773,15 @@ Hooks.on("renderActorDirectory", (_app, html) => {
 
 Hooks.on("renderActorSheet", (app, html) => {
   bindTokenResizeToActorSheet(app, html);
+  bindImageContextPopoutToSheet(app, html);
 });
+
+for (const hookName of IMAGE_CONTEXT_POPOUT_RENDER_HOOKS) {
+  if (hookName === "renderActorSheet") continue;
+  Hooks.on(hookName, (app, html) => {
+    bindImageContextPopoutToSheet(app, html);
+  });
+}
 
 Hooks.on("dropCanvasData", (canvasRef, dropData) => {
   if (!isTransientCompendiumActorDropsEnabled()) return;
@@ -2668,6 +2795,7 @@ Hooks.on("dropCanvasData", (canvasRef, dropData) => {
 
 Hooks.on("canvasReady", async () => {
   if (!isTokenResizeEnabled()) return;
+  if (!game.user?.isGM) return;
   for (const token of canvas?.tokens?.placeables || []) {
     try {
       await applyStoredTokenResizeToTokenDocument(token?.document || token, { allowPortraitFallback: true });
@@ -2716,8 +2844,11 @@ Hooks.on("preCreateToken", (tokenDoc, _data, options, userId) => {
   if (options && typeof options === "object") options.bloodmanTokenPreApplied = true;
 });
 
-Hooks.on("createToken", async tokenDoc => {
+Hooks.on("createToken", async (tokenDoc, _options, userId) => {
   if (!isTokenResizeEnabled()) return;
+  const currentUserId = String(game.user?.id || "").trim();
+  const creatingUserId = String(userId || "").trim();
+  if (currentUserId && creatingUserId && currentUserId !== creatingUserId) return;
   try {
     await applyStoredTokenResizeToTokenDocument(tokenDoc, { allowPortraitFallback: true });
   } catch (error) {

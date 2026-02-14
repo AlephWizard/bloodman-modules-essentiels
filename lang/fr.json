@@ -36,6 +36,10 @@
       "TransientCompendiumActorDrops": {
         "Name": "Drop compendium sans doublon d'acteur",
         "Hint": "Si active, le drop d'un acteur depuis un compendium vers la scene cree un acteur transitoire cache pour eviter un doublon visible dans le menu Acteurs."
+      },
+      "ImageContextPopout": {
+        "Name": "Restaurer clic droit image (popout partageable)",
+        "Hint": "Si active, un clic droit sur une image (fiches/journaux) ouvre l'image en popout partageable avec les joueurs."
       }
     },
     "TokenResize": {
