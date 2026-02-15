@@ -32,7 +32,6 @@ const NOTES_JOURNAL_PAGE_FLAG = "gmNotesJournalPage";
 const NOTES_JOURNAL_NAME = "Bloodman - Notes GM";
 const NOTES_JOURNAL_PAGE_NAME = "Notes";
 const SETTING_ENABLE_TOKEN_RESIZE = "enableTokenResize";
-const SETTING_ENABLE_IMAGE_CONTEXT_POPOUT = "enableImageContextPopout";
 const TILE_MACRO_SLOT_DEFAULT = 2;
 const NOTES_MACRO_SLOT_DEFAULT = 3;
 const TOKEN_RESIZE_OVERLAY_ID = "bjd-token-resize-overlay";
@@ -47,19 +46,11 @@ const TOKEN_MASK_INSET_RATIO = 0.04;
 const TOKEN_RESIZE_LEGACY_EXPORT_ROOT = `modules/${MODULE_ID}/images/token-resize`;
 const TOKEN_RESIZE_EXPORT_ROOT = `modules/${MODULE_ID}-token-resize`;
 const TOKEN_RESIZE_ACTOR_TYPES = new Set(["personnage", "personnage-non-joueur"]);
+const DEFAULT_ACTOR_ICON_SRC = "icons/svg/mystery-man.svg";
+const TOKEN_RESIZE_APPLY_WITH_PORTRAIT_FALLBACK = Object.freeze({ allowPortraitFallback: true });
 const IMAGE_DISPLAY_RETRY_DELAYS = Object.freeze([0, 120, 260]);
 const IMAGE_DISPLAY_CACHE_TTL_MS = 5 * 60 * 1000;
 const IMAGE_DISPLAY_CACHE_MAX = 512;
-const IMAGE_CONTEXT_POPOUT_RENDER_HOOKS = Object.freeze([
-  "renderActorSheet",
-  "renderItemSheet",
-  "renderJournalTextPageSheet",
-  "renderJournalEntryPageTextSheet",
-  "renderJournalEntryPageSheet",
-  "renderJournalPageSheet",
-  "renderJournalEntrySheet",
-  "renderJournalSheet"
-]);
 const GM_MACRO_COMMAND = `const api = game.modules.get("${MODULE_ID}")?.api;
 if (!api || typeof api.rollJetDestin !== "function") {
   ui.notifications?.warn("Module ${MODULE_ID} inactif ou API indisponible.");
@@ -81,8 +72,6 @@ if (!api || typeof api.openGmNotesWindow !== "function") {
 
 const PROCESSED_REQUESTS = new Map();
 const DISPLAYABLE_IMAGE_CACHE = new Map();
-const IMAGE_CONTEXT_POPOUT_HANDLED_FLAG = "__bjdImageContextPopoutHandled";
-let IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = null;
 
 function t(key, fallback, data = null) {
   const localized = data
@@ -666,7 +655,7 @@ function resolveTokenDocumentFromContext(actor, options = {}) {
 }
 
 function sanitizeTokenResizeFlagState(rawState = {}, options = {}) {
-  const fallbackSrc = String(options.fallbackSrc || "").trim() || "icons/svg/mystery-man.svg";
+  const fallbackSrc = String(options.fallbackSrc || "").trim() || DEFAULT_ACTOR_ICON_SRC;
   const sourceSrc = String(rawState?.src || "").trim() || fallbackSrc;
   const scaleX = normalizeTokenScale(rawState?.scaleX, 1);
   const scaleYFallback = rawState?.scaleY != null ? rawState.scaleY : scaleX;
@@ -758,7 +747,7 @@ function getActorTokenTextureState(actor, options = {}) {
   const worldActor = actorId ? game.actors?.get?.(actorId) : null;
   const actorSrc = String(worldActor?.img || actor?.img || "").trim();
   const tokenSrc = String(foundry.utils.getProperty(tokenData, `${texturePath}.src`) || "").trim();
-  const fallbackSrc = actorSrc || preferredSrc || "icons/svg/mystery-man.svg";
+  const fallbackSrc = actorSrc || preferredSrc || DEFAULT_ACTOR_ICON_SRC;
   const resolvedStorageKey = resolveTokenResizeStorageKey(actor, storedState || {}, options);
   const normalizedStoredState = sanitizeTokenResizeFlagState(storedState || {}, {
     fallbackSrc,
@@ -839,7 +828,7 @@ async function loadImageElement(src) {
 
 async function buildTokenTextureSourceFromResizeState(state, options = {}) {
   const sourceSrc = String(state?.src || "").trim();
-  if (!sourceSrc) return "icons/svg/mystery-man.svg";
+  if (!sourceSrc) return DEFAULT_ACTOR_ICON_SRC;
 
   let image;
   try {
@@ -921,7 +910,7 @@ async function saveActorTokenTextureState(actor, state, options = {}) {
     const actorUpdateTarget = worldActor?.update ? worldActor : actor;
 
     const portraitSrc = String(worldActor?.img || actor?.img || "").trim();
-    const sourceSrc = String(state?.src || "").trim() || portraitSrc || "icons/svg/mystery-man.svg";
+    const sourceSrc = String(state?.src || "").trim() || portraitSrc || DEFAULT_ACTOR_ICON_SRC;
     const rawStorageKey = resolveTokenResizeStorageKey(actorUpdateTarget || actor, state, {
       ...options,
       actorId
@@ -1269,238 +1258,6 @@ function bindTokenResizeToActorSheet(app, html) {
   });
 }
 
-function isImageContextPopoutEnabled() {
-  return Boolean(game.settings?.get?.(MODULE_ID, SETTING_ENABLE_IMAGE_CONTEXT_POPOUT));
-}
-
-function markImageContextPopoutEventHandled(event) {
-  if (!event) return;
-  try {
-    event[IMAGE_CONTEXT_POPOUT_HANDLED_FLAG] = true;
-  } catch (_error) {
-    // non-fatal marker failure
-  }
-}
-
-function wasImageContextPopoutEventHandled(event) {
-  if (!event) return false;
-  try {
-    return Boolean(event[IMAGE_CONTEXT_POPOUT_HANDLED_FLAG]);
-  } catch (_error) {
-    return false;
-  }
-}
-
-function resolveImageFromContextMenuEvent(event) {
-  const eventPath = typeof event?.composedPath === "function" ? event.composedPath() : [];
-  for (const node of eventPath) {
-    const tagName = String(node?.tagName || "").trim().toLowerCase();
-    if (tagName === "img") return node;
-    if (node && typeof node.closest === "function") {
-      const closestImage = node.closest("img");
-      if (closestImage) return closestImage;
-    }
-  }
-
-  const rawTarget = event?.target;
-  if (!rawTarget) return null;
-  if (String(rawTarget?.tagName || "").trim().toLowerCase() === "img") return rawTarget;
-  const targetElement = typeof rawTarget.closest === "function"
-    ? rawTarget
-    : (rawTarget?.parentElement || null);
-  if (!targetElement) return null;
-  if (typeof targetElement.closest === "function") {
-    const closestImage = targetElement.closest("img");
-    if (closestImage) return closestImage;
-  }
-  return null;
-}
-
-function imageBelongsToApplicationWindow(image) {
-  if (!image) return false;
-  if (typeof image.closest === "function" && image.closest(".window-app, .application")) return true;
-  try {
-    const frameElement = image.ownerDocument?.defaultView?.frameElement || null;
-    if (frameElement && typeof frameElement.closest === "function") {
-      return Boolean(frameElement.closest(".window-app, .application"));
-    }
-  } catch (_error) {
-    // Ignore inaccessible frame element contexts.
-  }
-  return false;
-}
-
-function openImagePopoutFromContextMenuEvent(event, app = null) {
-  if (!isImageContextPopoutEnabled()) return false;
-  if (!event || wasImageContextPopoutEventHandled(event)) return false;
-
-  const image = resolveImageFromContextMenuEvent(event);
-  if (!image) return false;
-  if (!imageBelongsToApplicationWindow(image)) return false;
-
-  const imageSrc = String(
-    image.currentSrc
-    || image.src
-    || image.getAttribute?.("src")
-    || ""
-  ).trim();
-  if (!imageSrc) return false;
-
-  markImageContextPopoutEventHandled(event);
-  if (typeof event.preventDefault === "function") event.preventDefault();
-  if (typeof event.stopPropagation === "function") event.stopPropagation();
-
-  try {
-    const title = String(image.alt || image.title || app?.title || "").trim() || "Image";
-    const popout = new ImagePopout(imageSrc, { title, shareable: true });
-    popout.render(true);
-    return true;
-  } catch (error) {
-    console.warn(`[${MODULE_ID}] failed to open image popout from context menu`, error);
-    return false;
-  }
-}
-
-function resolveImageContextPopoutRoot(html) {
-  const root = html?.[0] || html;
-  if (!root || typeof root.addEventListener !== "function") return null;
-  return root;
-}
-
-function isImageContextPopoutCandidateApp(app) {
-  const constructorName = String(app?.constructor?.name || "").trim().toLowerCase();
-  if (constructorName.includes("sheet")) return true;
-  const documentName = String(app?.document?.documentName || app?.object?.documentName || "").trim().toLowerCase();
-  return documentName === "actor" || documentName === "item" || documentName === "journalentry" || documentName === "journalentrypage";
-}
-
-function refreshOpenSheetsForImageContextPopout() {
-  for (const app of Object.values(ui.windows || {})) {
-    if (!isImageContextPopoutCandidateApp(app)) continue;
-    app.render?.(false);
-  }
-}
-
-function clearImageContextPopoutGlobalBindings() {
-  const binding = IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING;
-  if (!binding) return;
-  for (const cleanup of binding.cleanups || []) {
-    if (typeof cleanup !== "function") continue;
-    try {
-      cleanup();
-    } catch (_error) {
-      // non-fatal cleanup error
-    }
-  }
-  IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = null;
-}
-
-function installImageContextPopoutGlobalBindings() {
-  clearImageContextPopoutGlobalBindings();
-
-  const cleanups = [];
-  const boundDocuments = new WeakSet();
-  const boundIframes = new WeakSet();
-
-  function bindDocument(doc) {
-    if (!doc || typeof doc.addEventListener !== "function") return;
-    if (boundDocuments.has(doc)) return;
-    boundDocuments.add(doc);
-
-    const contextMenuHandler = event => {
-      openImagePopoutFromContextMenuEvent(event, null);
-    };
-    doc.addEventListener("contextmenu", contextMenuHandler, true);
-    cleanups.push(() => {
-      doc.removeEventListener("contextmenu", contextMenuHandler, true);
-    });
-
-    if (typeof doc.querySelectorAll === "function") {
-      for (const frame of doc.querySelectorAll("iframe")) {
-        bindIframe(frame);
-      }
-    }
-
-    const observedRoot = doc.body || doc.documentElement;
-    if (!observedRoot || typeof MutationObserver !== "function") return;
-    const observer = new MutationObserver(mutations => {
-      for (const mutation of mutations || []) {
-        for (const node of mutation.addedNodes || []) {
-          if (!node || typeof node !== "object") continue;
-          const tagName = String(node.tagName || "").trim().toLowerCase();
-          if (tagName === "iframe") bindIframe(node);
-          if (typeof node.querySelectorAll === "function") {
-            for (const frame of node.querySelectorAll("iframe")) {
-              bindIframe(frame);
-            }
-          }
-        }
-      }
-    });
-    observer.observe(observedRoot, { childList: true, subtree: true });
-    cleanups.push(() => observer.disconnect());
-  }
-
-  function bindIframe(frame) {
-    if (!frame || typeof frame.addEventListener !== "function") return;
-    if (boundIframes.has(frame)) return;
-    boundIframes.add(frame);
-
-    const bindFrameDocument = () => {
-      try {
-        const frameDocument = frame.contentDocument || frame.contentWindow?.document || null;
-        if (frameDocument) bindDocument(frameDocument);
-      } catch (_error) {
-        // Ignore inaccessible iframe documents.
-      }
-    };
-
-    bindFrameDocument();
-    frame.addEventListener("load", bindFrameDocument, true);
-    cleanups.push(() => {
-      frame.removeEventListener("load", bindFrameDocument, true);
-    });
-  }
-
-  bindDocument(document);
-  IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = { cleanups };
-}
-
-function refreshImageContextPopoutBindings() {
-  clearImageContextPopoutGlobalBindings();
-  if (isImageContextPopoutEnabled()) {
-    installImageContextPopoutGlobalBindings();
-  }
-  refreshOpenSheetsForImageContextPopout();
-}
-
-function bindImageContextPopoutToSheet(app, html) {
-  const root = resolveImageContextPopoutRoot(html);
-  if (!root) return;
-
-  if (Array.isArray(root.__bjdImageContextPopoutCleanups)) {
-    for (const cleanup of root.__bjdImageContextPopoutCleanups) {
-      if (typeof cleanup === "function") cleanup();
-    }
-    root.__bjdImageContextPopoutCleanups = null;
-  }
-
-  if (!isImageContextPopoutEnabled()) return;
-
-  const cleanups = [];
-  const contextMenuHandler = event => {
-    const image = resolveImageFromContextMenuEvent(event);
-    if (!image || !root.contains(image)) return;
-    openImagePopoutFromContextMenuEvent(event, app);
-  };
-  root.addEventListener("contextmenu", contextMenuHandler, true);
-  cleanups.push(() => {
-    root.removeEventListener("contextmenu", contextMenuHandler, true);
-  });
-
-  root.__bjdImageContextPopoutCleanups = cleanups;
-}
-
 function refreshOpenActorSheetsForTokenResize() {
   for (const app of Object.values(ui.windows || {})) {
     const actor = app?.actor;
@@ -1593,7 +1350,7 @@ async function applyStoredTokenResizeToTokenDocument(tokenDoc, options = {}) {
     return Boolean(updatedFallbackDoc);
   }
 
-  const sourceFallback = String(rawState?.src || actor?.img || "icons/svg/mystery-man.svg").trim() || "icons/svg/mystery-man.svg";
+  const sourceFallback = String(rawState?.src || actor?.img || DEFAULT_ACTOR_ICON_SRC).trim() || DEFAULT_ACTOR_ICON_SRC;
   const resolvedStorageKey = resolveTokenResizeStorageKey(actor, rawState, options);
   let desiredState = sanitizeTokenResizeFlagState(
     {
@@ -2176,24 +1933,6 @@ function registerModuleSettings() {
     }
   });
 
-  game.settings.register(MODULE_ID, SETTING_ENABLE_IMAGE_CONTEXT_POPOUT, {
-    name: t(
-      "BJD.Settings.ImageContextPopout.Name",
-      "Restaurer clic droit image (popout partageable)"
-    ),
-    hint: t(
-      "BJD.Settings.ImageContextPopout.Hint",
-      "Si active, un clic droit sur une image (fiches/journaux) ouvre l'image en popout partageable avec les joueurs."
-    ),
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true,
-    onChange: () => {
-      refreshImageContextPopoutBindings();
-    }
-  });
-
   game.settings.register(MODULE_ID, SETTING_ENABLE_GM_MACRO, {
     name: t("BJD.Settings.EnableGmMacro.Name", "Activer la macro automatique du destin"),
     hint: t("BJD.Settings.EnableGmMacro.Hint", "Cree ou met a jour la macro et l'attribue automatiquement au slot configure."),
@@ -2612,9 +2351,6 @@ Hooks.once("init", () => {
 
   const api = {
     rollJetDestin,
-    emitVoyanceOverlayRequest,
-    showVoyanceOverlay,
-    handleVoyanceOverlayRequest,
     toggleCurrentSceneTilesVisibility,
     openGmNotesWindow
   };
@@ -2626,7 +2362,6 @@ Hooks.once("init", () => {
 
 Hooks.once("ready", async () => {
   registerSocketHandler();
-  refreshImageContextPopoutBindings();
   await ensureGmHotbarMacro();
   await ensureTileVisibilityHotbarMacro();
   await ensureNotesHotbarMacro();
@@ -2634,19 +2369,6 @@ Hooks.once("ready", async () => {
 
 Hooks.on("renderActorSheet", (app, html) => {
   bindTokenResizeToActorSheet(app, html);
-  bindImageContextPopoutToSheet(app, html);
-});
-
-for (const hookName of IMAGE_CONTEXT_POPOUT_RENDER_HOOKS) {
-  if (hookName === "renderActorSheet") continue;
-  Hooks.on(hookName, (app, html) => {
-    bindImageContextPopoutToSheet(app, html);
-  });
-}
-
-Hooks.on("renderApplication", (app, html) => {
-  if (!isImageContextPopoutCandidateApp(app)) return;
-  bindImageContextPopoutToSheet(app, html);
 });
 
 Hooks.on("canvasReady", async () => {
@@ -2654,7 +2376,7 @@ Hooks.on("canvasReady", async () => {
   if (!game.user?.isGM) return;
   for (const token of canvas?.tokens?.placeables || []) {
     try {
-      await applyStoredTokenResizeToTokenDocument(token?.document || token, { allowPortraitFallback: true });
+      await applyStoredTokenResizeToTokenDocument(token?.document || token, TOKEN_RESIZE_APPLY_WITH_PORTRAIT_FALLBACK);
     } catch (error) {
       console.warn(`[${MODULE_ID}] failed to apply stored token resize on canvasReady`, error);
     }
@@ -2687,7 +2409,7 @@ Hooks.on("preCreateToken", (tokenDoc, _data, options, userId) => {
   const preFlagState = actorHasStoredToken
     ? {
       ...sanitizeTokenResizeFlagState(actorFlag, {
-        fallbackSrc: stripPathQueryAndHash(actor?.img || actorFlag?.src || "icons/svg/mystery-man.svg"),
+        fallbackSrc: stripPathQueryAndHash(actor?.img || actorFlag?.src || DEFAULT_ACTOR_ICON_SRC),
         storageKey: resolveTokenResizeStorageKey(actor, actorFlag, { actorId: actor?.id })
       }),
       tokenSrc: desiredBaseSrc,
@@ -2706,7 +2428,7 @@ Hooks.on("createToken", async (tokenDoc, _options, userId) => {
   const creatingUserId = String(userId || "").trim();
   if (currentUserId && creatingUserId && currentUserId !== creatingUserId) return;
   try {
-    await applyStoredTokenResizeToTokenDocument(tokenDoc, { allowPortraitFallback: true });
+    await applyStoredTokenResizeToTokenDocument(tokenDoc, TOKEN_RESIZE_APPLY_WITH_PORTRAIT_FALLBACK);
   } catch (error) {
     console.warn(`[${MODULE_ID}] failed to apply stored token resize on createToken`, error);
   }
@@ -2734,9 +2456,6 @@ Hooks.on("createChatMessage", async message => {
 
 export {
   rollJetDestin,
-  emitVoyanceOverlayRequest,
-  showVoyanceOverlay,
-  handleVoyanceOverlayRequest,
   toggleCurrentSceneTilesVisibility,
   openGmNotesWindow
 };

@@ -1,6 +1,11 @@
 # Bloodman - Modules Essentiels
 
-Module Foundry contenant les fonctionnalites essentielles Bloodman (incluant le jet du destin).
+Module Foundry limite aux fonctionnalites suivantes:
+
+- Redimensionnement de token
+- Macro automatique du destin
+- Macro de visibilite des tuiles
+- Macro automatique des notes
 
 ## Installation
 
@@ -15,14 +20,6 @@ Les PNG utilises par le redimensionnement de token sont desormais stockes hors d
 `modules/bloodman-modules-essentiels-token-resize`
 
 Le module gere automatiquement la migration logique des anciens chemins `modules/bloodman-modules-essentiels/images/token-resize/...`.
-
-## Drop Compendium
-
-Un reglage monde est disponible:
-
-- `Drop compendium sans doublon d'acteur`
-
-Quand il est active, le drop d'un acteur depuis un compendium vers la scene cree un acteur transitoire cache, pour eviter un doublon visible dans le menu Acteurs.
 
 ## Macro
 
@@ -42,8 +39,8 @@ if (!api || typeof api.rollJetDestin !== "function") {
 Le module expose aussi:
 
 - `game.modules.get("bloodman-modules-essentiels").api.rollJetDestin(options)`
-- `game.modules.get("bloodman-modules-essentiels").api.emitVoyanceOverlayRequest(payload)`
-- `game.modules.get("bloodman-modules-essentiels").api.showVoyanceOverlay(payload)`
+- `game.modules.get("bloodman-modules-essentiels").api.toggleCurrentSceneTilesVisibility()`
+- `game.modules.get("bloodman-modules-essentiels").api.openGmNotesWindow()`
 
 Exemple:
 

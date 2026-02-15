@@ -32,10 +32,6 @@
       "TokenResize": {
         "Name": "Redimensionnement de token",
         "Hint": "Le portrait conserve le Finder natif. Utilisez le bouton Token sur la fiche pour cadrer et generer le PNG de token."
-      },
-      "ImageContextPopout": {
-        "Name": "Restaurer clic droit image (popout partageable)",
-        "Hint": "Si active, un clic droit sur une image (fiches/journaux) ouvre l'image en popout partageable avec les joueurs."
       }
     },
     "TokenResize": {
