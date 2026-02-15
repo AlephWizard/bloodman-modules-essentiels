@@ -32,11 +32,7 @@ const NOTES_JOURNAL_PAGE_FLAG = "gmNotesJournalPage";
 const NOTES_JOURNAL_NAME = "Bloodman - Notes GM";
 const NOTES_JOURNAL_PAGE_NAME = "Notes";
 const SETTING_ENABLE_TOKEN_RESIZE = "enableTokenResize";
-const SETTING_ENABLE_TRANSIENT_COMPENDIUM_ACTOR_DROPS = "enableTransientCompendiumActorDrops";
 const SETTING_ENABLE_IMAGE_CONTEXT_POPOUT = "enableImageContextPopout";
-const TRANSIENT_COMPENDIUM_ACTOR_FLAG = "transientCompendiumActor";
-const TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG = "transientCompendiumSourceUuid";
-const TRANSIENT_COMPENDIUM_SOURCE_PACK_FLAG = "transientCompendiumSourcePack";
 const TILE_MACRO_SLOT_DEFAULT = 2;
 const NOTES_MACRO_SLOT_DEFAULT = 3;
 const TOKEN_RESIZE_OVERLAY_ID = "bjd-token-resize-overlay";
@@ -85,7 +81,6 @@ if (!api || typeof api.openGmNotesWindow !== "function") {
 
 const PROCESSED_REQUESTS = new Map();
 const DISPLAYABLE_IMAGE_CACHE = new Map();
-const TRANSIENT_COMPENDIUM_ACTOR_CREATIONS = new Map();
 const IMAGE_CONTEXT_POPOUT_HANDLED_FLAG = "__bjdImageContextPopoutHandled";
 let IMAGE_CONTEXT_POPOUT_GLOBAL_BINDING = null;
 
@@ -1531,268 +1526,6 @@ function getSceneTokenDocuments(scene) {
   }
 }
 
-function isTransientCompendiumActorDropsEnabled() {
-  return Boolean(game.settings?.get?.(MODULE_ID, SETTING_ENABLE_TRANSIENT_COMPENDIUM_ACTOR_DROPS));
-}
-
-function isCompendiumDropData(dropData = {}) {
-  const dropUuid = String(dropData?.uuid || "").trim();
-  const dropPack = String(dropData?.pack || "").trim();
-  return dropUuid.startsWith("Compendium.") || dropPack.length > 0;
-}
-
-function isCompendiumActorCanvasDrop(dropData = {}) {
-  const dropType = String(dropData?.type || "").trim();
-  const dropPack = String(dropData?.pack || "").trim();
-  const dropUuid = String(dropData?.uuid || "").trim().toLowerCase();
-
-  const isActorDrop = dropType === "Actor" || dropUuid.includes(".actor.");
-  if (!isActorDrop) return false;
-
-  return Boolean(dropPack || dropUuid.startsWith("compendium."));
-}
-
-function getTransientCompendiumActorSourceUuid(actor) {
-  return String(actor?.getFlag?.(MODULE_ID, TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG) || "").trim();
-}
-
-function isTransientCompendiumActor(actor) {
-  return actor?.getFlag?.(MODULE_ID, TRANSIENT_COMPENDIUM_ACTOR_FLAG) === true;
-}
-
-function getTransientCompendiumActors() {
-  return (game.actors?.contents || []).filter(actor => isTransientCompendiumActor(actor));
-}
-
-function findTransientCompendiumActorBySourceUuid(sourceUuid, actorType = "") {
-  const normalizedSourceUuid = String(sourceUuid || "").trim();
-  const normalizedActorType = String(actorType || "").trim();
-  if (!normalizedSourceUuid) return null;
-  return getTransientCompendiumActors().find(actor => {
-    if (normalizedActorType && String(actor?.type || "").trim() !== normalizedActorType) return false;
-    return getTransientCompendiumActorSourceUuid(actor) === normalizedSourceUuid;
-  }) || null;
-}
-
-function removeTransientCompendiumActorsFromDirectory(html) {
-  const root = html?.[0] || html;
-  if (!root || typeof root.querySelectorAll !== "function") return;
-
-  const actorIds = getTransientCompendiumActors()
-    .map(actor => String(actor?.id || "").trim())
-    .filter(Boolean);
-  if (!actorIds.length) return;
-
-  for (const actorId of actorIds) {
-    const selectors = [
-      `[data-entry-id="${actorId}"]`,
-      `[data-document-id="${actorId}"]`,
-      `li[data-entry-id="${actorId}"]`,
-      `li[data-document-id="${actorId}"]`
-    ];
-    for (const selector of selectors) {
-      for (const element of root.querySelectorAll(selector)) {
-        element.remove();
-      }
-    }
-  }
-}
-
-function buildTransientCompendiumActorCreateData(sourceActor, sourceDropData = {}) {
-  const actorData = foundry.utils.deepClone(sourceActor?.toObject?.() || {});
-  if (!actorData || typeof actorData !== "object") return null;
-
-  delete actorData._id;
-  actorData.folder = null;
-  actorData.prototypeToken = actorData.prototypeToken && typeof actorData.prototypeToken === "object"
-    ? actorData.prototypeToken
-    : {};
-  actorData.prototypeToken.actorLink = false;
-  actorData.flags = actorData.flags && typeof actorData.flags === "object" ? actorData.flags : {};
-  actorData.flags[MODULE_ID] = {
-    ...(actorData.flags[MODULE_ID] || {}),
-    [TRANSIENT_COMPENDIUM_ACTOR_FLAG]: true,
-    [TRANSIENT_COMPENDIUM_SOURCE_UUID_FLAG]: String(sourceActor?.uuid || sourceDropData?.uuid || "").trim(),
-    [TRANSIENT_COMPENDIUM_SOURCE_PACK_FLAG]: String(sourceDropData?.pack || "").trim()
-  };
-  return actorData;
-}
-
-function resolveCompendiumDropCoordinates(canvasRef, dropData = {}) {
-  const rawX = Number(dropData?.x);
-  const rawY = Number(dropData?.y);
-  if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
-
-  const rawPoint = { x: rawX, y: rawY };
-  const grid = canvasRef?.grid || canvas?.grid;
-  if (!grid || typeof grid.getSnappedPoint !== "function") return rawPoint;
-
-  try {
-    const snappedPoint = grid.getSnappedPoint(rawPoint, {
-      mode: CONST?.GRID_SNAPPING_MODES?.CENTER
-    });
-    if (Number.isFinite(snappedPoint?.x) && Number.isFinite(snappedPoint?.y)) {
-      return { x: snappedPoint.x, y: snappedPoint.y };
-    }
-  } catch (_error) {
-    // Fallback to unsnapped coordinates.
-  }
-  return rawPoint;
-}
-
-async function resolveActorFromCanvasDropData(dropData = {}) {
-  const dropType = String(dropData?.type || "").trim();
-  if (dropType !== "Actor") return null;
-
-  if (typeof Actor?.implementation?.fromDropData === "function") {
-    const droppedActor = await Actor.implementation.fromDropData(dropData).catch(() => null);
-    if (droppedActor?.documentName === "Actor") return droppedActor;
-  }
-
-  const dropUuid = String(dropData?.uuid || "").trim();
-  if (dropUuid && typeof fromUuid === "function") {
-    const resolvedActor = await fromUuid(dropUuid).catch(() => null);
-    if (resolvedActor?.documentName === "Actor") return resolvedActor;
-  }
-
-  const packId = String(dropData?.pack || "").trim();
-  const documentId = String(dropData?.id || dropData?._id || "").trim();
-  if (!packId || !documentId) return null;
-  const pack = game.packs?.get?.(packId);
-  if (!pack || typeof pack.getDocument !== "function") return null;
-  const resolvedPackActor = await pack.getDocument(documentId).catch(() => null);
-  return resolvedPackActor?.documentName === "Actor" ? resolvedPackActor : null;
-}
-
-async function getOrCreateTransientCompendiumActor(sourceActor, sourceDropData = {}) {
-  const sourceUuid = String(sourceActor?.uuid || sourceDropData?.uuid || "").trim();
-  const actorType = String(sourceActor?.type || "").trim();
-  if (!sourceUuid) return null;
-
-  const existingActor = findTransientCompendiumActorBySourceUuid(sourceUuid, actorType);
-  if (existingActor) return existingActor;
-
-  const lockKey = `${sourceUuid}::${actorType}`;
-  const pendingCreation = TRANSIENT_COMPENDIUM_ACTOR_CREATIONS.get(lockKey);
-  if (pendingCreation) return pendingCreation;
-
-  const createPromise = (async () => {
-    const latestActor = findTransientCompendiumActorBySourceUuid(sourceUuid, actorType);
-    if (latestActor) return latestActor;
-
-    const createData = buildTransientCompendiumActorCreateData(sourceActor, sourceDropData);
-    if (!createData) return null;
-
-    const createdActor = await Actor.implementation.create(createData, {
-      renderSheet: false
-    }).catch(error => {
-      console.error(`[${MODULE_ID}] failed to create transient compendium actor`, error);
-      return null;
-    });
-    return createdActor?.documentName === "Actor" ? createdActor : null;
-  })();
-
-  TRANSIENT_COMPENDIUM_ACTOR_CREATIONS.set(lockKey, createPromise);
-  try {
-    return await createPromise;
-  } finally {
-    TRANSIENT_COMPENDIUM_ACTOR_CREATIONS.delete(lockKey);
-  }
-}
-
-async function createTokenFromActorDropOnScene(actor, canvasRef, dropData = {}) {
-  const scene = canvasRef?.scene;
-  if (!scene || !actor) return null;
-
-  const dropPosition = resolveCompendiumDropCoordinates(canvasRef, dropData);
-  const tokenDoc = await actor.getTokenDocument(dropPosition || {}).catch(error => {
-    console.error(`[${MODULE_ID}] failed to build token document from actor`, error);
-    return null;
-  });
-  if (!tokenDoc) return null;
-
-  const tokenData = foundry.utils.deepClone(tokenDoc.toObject());
-  delete tokenData._id;
-  if (dropPosition) {
-    tokenData.x = dropPosition.x;
-    tokenData.y = dropPosition.y;
-  }
-
-  const createdTokens = await scene.createEmbeddedDocuments("Token", [tokenData]).catch(error => {
-    console.error(`[${MODULE_ID}] failed to create token from transient compendium actor`, error);
-    return null;
-  });
-  return createdTokens?.[0] || null;
-}
-
-function sceneHasTokenForActor(actorId) {
-  const targetActorId = String(actorId || "").trim();
-  if (!targetActorId) return false;
-
-  for (const scene of game.scenes?.contents || []) {
-    for (const tokenDoc of getSceneTokenDocuments(scene)) {
-      const tokenActorId = String(tokenDoc?.actorId || "").trim();
-      if (tokenActorId === targetActorId) return true;
-    }
-  }
-  return false;
-}
-
-async function cleanupTransientCompendiumActors(options = {}) {
-  if (!game.user?.isGM) return 0;
-
-  const exceptActorIds = new Set(
-    (options?.exceptActorIds || [])
-      .map(actorId => String(actorId || "").trim())
-      .filter(Boolean)
-  );
-  let removedCount = 0;
-
-  for (const actor of getTransientCompendiumActors()) {
-    const actorId = String(actor?.id || "").trim();
-    if (!actorId || exceptActorIds.has(actorId)) continue;
-    if (sceneHasTokenForActor(actorId)) continue;
-
-    const deletedActor = await actor.delete({ renderSheet: false }).catch(error => {
-      console.warn(`[${MODULE_ID}] failed to cleanup transient compendium actor ${actorId}`, error);
-      return null;
-    });
-    if (deletedActor) removedCount += 1;
-  }
-
-  return removedCount;
-}
-
-async function handleTransientCompendiumActorCanvasDrop(canvasRef, dropData = {}) {
-  const sourceActor = await resolveActorFromCanvasDropData(dropData);
-  if (!sourceActor) {
-    ui.notifications?.warn(t(
-      "BJD.Notify.CompendiumDropActorLoadFailed",
-      "Drop compendium: impossible de charger cet acteur."
-    ));
-    return false;
-  }
-
-  const transientActor = await getOrCreateTransientCompendiumActor(sourceActor, dropData);
-  if (!transientActor) {
-    ui.notifications?.warn(t(
-      "BJD.Notify.CompendiumDropActorCreateFailed",
-      "Drop compendium: impossible de creer l'acteur transitoire."
-    ));
-    return false;
-  }
-
-  const createdToken = await createTokenFromActorDropOnScene(transientActor, canvasRef, dropData);
-  if (!createdToken) {
-    ui.notifications?.warn(t(
-      "BJD.Notify.CompendiumDropTokenCreateFailed",
-      "Drop compendium: impossible de creer le token sur la scene."
-    ));
-    return false;
-  }
-  return true;
-}
-
 function readTokenTextureState(tokenDocument) {
   const currentSrc = String(foundry.utils.getProperty(tokenDocument, "texture.src") || tokenDocument?.img || "").trim();
   return {
@@ -2443,24 +2176,6 @@ function registerModuleSettings() {
     }
   });
 
-  game.settings.register(MODULE_ID, SETTING_ENABLE_TRANSIENT_COMPENDIUM_ACTOR_DROPS, {
-    name: t(
-      "BJD.Settings.TransientCompendiumActorDrops.Name",
-      "Drop compendium sans doublon d'acteur"
-    ),
-    hint: t(
-      "BJD.Settings.TransientCompendiumActorDrops.Hint",
-      "Si active, le drop d'un acteur depuis un compendium vers la scene cree un acteur transitoire cache pour eviter un doublon visible dans le menu Acteurs."
-    ),
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: false,
-    onChange: async () => {
-      ui.actors?.render?.(false);
-    }
-  });
-
   game.settings.register(MODULE_ID, SETTING_ENABLE_IMAGE_CONTEXT_POPOUT, {
     name: t(
       "BJD.Settings.ImageContextPopout.Name",
@@ -2917,11 +2632,6 @@ Hooks.once("ready", async () => {
   await ensureNotesHotbarMacro();
 });
 
-Hooks.on("renderActorDirectory", (_app, html) => {
-  if (!isTransientCompendiumActorDropsEnabled()) return;
-  removeTransientCompendiumActorsFromDirectory(html);
-});
-
 Hooks.on("renderActorSheet", (app, html) => {
   bindTokenResizeToActorSheet(app, html);
   bindImageContextPopoutToSheet(app, html);
@@ -2937,16 +2647,6 @@ for (const hookName of IMAGE_CONTEXT_POPOUT_RENDER_HOOKS) {
 Hooks.on("renderApplication", (app, html) => {
   if (!isImageContextPopoutCandidateApp(app)) return;
   bindImageContextPopoutToSheet(app, html);
-});
-
-Hooks.on("dropCanvasData", (canvasRef, dropData) => {
-  if (!isTransientCompendiumActorDropsEnabled()) return;
-  if (!canvasRef?.scene) return;
-  if (!isCompendiumDropData(dropData)) return;
-  if (!isCompendiumActorCanvasDrop(dropData)) return;
-
-  void handleTransientCompendiumActorCanvasDrop(canvasRef, dropData);
-  return false;
 });
 
 Hooks.on("canvasReady", async () => {
